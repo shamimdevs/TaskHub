@@ -1,26 +1,289 @@
 @import "tailwindcss";
 
+/* ------------------------------------------------------------------ *
+ * Design tokens — light theme (default)
+ * ------------------------------------------------------------------ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surfaces are white. --bg-subtle / --card-muted are NOT surfaces — they
+     are the faint neutral used for control rails, row hovers, table stripes
+     and skeletons, where pure white would be invisible. */
+  --bg: #ffffff;
+  --bg-subtle: #f4f4f6;
+  --card: #ffffff;
+  --card-muted: #fafafa;
+  --border: #e6e7ea;
+  --border-strong: #d4d6db;
+  --fg: #000000;
+  --fg-muted: #3f3f46;
+  --fg-subtle: #71717a;
+  --ring: #10b981;
+
+  --brand: #10b981;
+  --brand-fg: #ffffff;
+  --accent: #10b981;
+  --accent-fg: #ffffff;
+
+  --success: #12b76a;
+  --success-soft: #ecfdf3;
+  --warning: #f79009;
+  --warning-soft: #fffaeb;
+  --danger: #f04438;
+  --danger-soft: #fef3f2;
+  --info: #2e90fa;
+  --info-soft: #eff8ff;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
+/* Single light appearance — the app is always white bg / black text /
+   brand-green accent, so the dark overrides are pinned to the same
+   values instead of inverting. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme="light"]) {
+    --bg: #ffffff;
+    --bg-subtle: #f4f4f6;
+    --card: #ffffff;
+    --card-muted: #fafafa;
+    --border: #e6e7ea;
+    --border-strong: #d4d6db;
+    --fg: #000000;
+    --fg-muted: #3f3f46;
+    --fg-subtle: #71717a;
+    --ring: #10b981;
   }
 }
 
+:root[data-theme="dark"] {
+  --bg: #ffffff;
+  --bg-subtle: #f4f4f6;
+  --card: #ffffff;
+  --card-muted: #fafafa;
+  --border: #e6e7ea;
+  --border-strong: #d4d6db;
+  --fg: #000000;
+  --fg-muted: #3f3f46;
+  --fg-subtle: #71717a;
+  --ring: #10b981;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tailwind theme mapping
+ * ------------------------------------------------------------------ */
+@theme inline {
+  --breakpoint-xs: 26rem;
+
+  /* Semantic colors (theme-aware via CSS vars above) */
+  --color-bg: var(--bg);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-card: var(--card);
+  --color-card-muted: var(--card-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-ring: var(--ring);
+
+  --color-brand: var(--brand);
+  --color-brand-fg: var(--brand-fg);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
+  /* Brand ramp (static) */
+  --color-brand-50: #ecfdf5;
+  --color-brand-100: #d1fae5;
+  --color-brand-200: #a7f3d0;
+  --color-brand-300: #6ee7b7;
+  --color-brand-400: #34d399;
+  --color-brand-500: #10b981;
+  --color-brand-600: #059669;
+  --color-brand-700: #047857;
+  --color-brand-800: #065f46;
+  --color-brand-900: #064e3b;
+  --color-brand-950: #022c22;
+
+  /* Accent ramp — aliased to the brand ramp so any accent-* utility
+     renders as brand green (no second accent hue in the UI). */
+  --color-accent-50: #ecfdf5;
+  --color-accent-100: #d1fae5;
+  --color-accent-200: #a7f3d0;
+  --color-accent-300: #6ee7b7;
+  --color-accent-400: #34d399;
+  --color-accent-500: #10b981;
+  --color-accent-600: #059669;
+  --color-accent-700: #047857;
+  --color-accent-800: #065f46;
+  --color-accent-900: #064e3b;
+
+  /* Radius scale */
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+  --radius-3xl: 1.75rem;
+
+  /* Fonts */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Shadows — layered & low-contrast so white cards read as raised
+     without a grey fill. */
+  --shadow-xs: 0 1px 2px rgb(16 24 40 / 0.05);
+  --shadow-soft:
+    0 1px 2px rgb(16 24 40 / 0.04), 0 2px 6px -2px rgb(16 24 40 / 0.06),
+    0 8px 20px -12px rgb(16 24 40 / 0.1);
+  --shadow-card:
+    0 1px 3px rgb(16 24 40 / 0.05), 0 6px 16px -6px rgb(16 24 40 / 0.1),
+    0 20px 48px -20px rgb(16 24 40 / 0.16);
+  --shadow-lift:
+    0 8px 18px -6px rgb(16 185 129 / 0.22),
+    0 24px 56px -22px rgb(16 24 40 / 0.22);
+  --shadow-ring: 0 0 0 1px rgb(16 24 40 / 0.04);
+
+  /* Motion */
+  --animate-fade-up: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-in: fade-in 0.4s ease-out both;
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-pulse-ring: pulse-ring 2.2s ease-out infinite;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(16 185 129 / 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgb(16 185 129 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(16 185 129 / 0);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Base
+ * ------------------------------------------------------------------ */
+* {
+  border-color: var(--color-border);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Mobile safe-area helpers */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.min-h-dvh {
+  min-height: 100dvh;
+}
+
+/* Thin scrollbars for in-app scroll regions */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 9999px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Marketing — the one deep-green band on an otherwise all-white page.
+ * ------------------------------------------------------------------ */
+.hero-gradient {
+  background-color: #064e3b; /* brand-900 */
+  background-image:
+    radial-gradient(
+      46rem 32rem at 12% -12%,
+      rgb(52 211 153 / 0.28),
+      transparent 60%
+    ),
+    radial-gradient(
+      44rem 30rem at 104% 112%,
+      rgb(16 185 129 / 0.22),
+      transparent 56%
+    ),
+    linear-gradient(155deg, #064e3b 0%, #065f46 46%, #047857 100%);
+}
+
+/* Legal / long-form copy (Terms, Privacy). */
+.prose-terms ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.prose-terms li {
+  margin-top: 0.375rem;
+}
+.prose-terms li::marker {
+  color: var(--color-border-strong);
+}
+.prose-terms strong {
+  font-weight: 600;
+  color: var(--color-fg);
+}
+.prose-terms a {
+  color: var(--color-brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
