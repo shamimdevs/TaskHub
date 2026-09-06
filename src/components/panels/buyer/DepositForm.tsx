@@ -10,9 +10,10 @@ import { Button } from "@/components/ui/Button";
 import { Alert, CopyButton } from "@/components/ui/Misc";
 import { useToast } from "@/components/ui/Toast";
 import { useCreateDepositMutation } from "@/redux/features/deposits/depositsApi";
-import { LIMITS, PAYMENT_METHODS } from "@/lib/constants";
+import { useGetSettingsQuery } from "@/redux/features/settings/settingsApi";
+import { LIMITS, PAYMENT_METHODS, USD_RATE } from "@/lib/constants";
 import { fill, t } from "@/lib/i18n/en";
-import { formatMoney } from "@/lib/utils";
+import { formatBdt, formatMoney, toUsd } from "@/lib/utils";
 import type { PaymentMethod } from "@/types";
 
 const QUICK = [500, 1000, 2000, 5000];
@@ -20,19 +21,28 @@ const QUICK = [500, 1000, 2000, 5000];
 export function DepositForm() {
   const toast = useToast();
   const [create, { isLoading }] = useCreateDepositMutation();
+  const { data: settings } = useGetSettingsQuery();
 
   const [method, setMethod] = useState<PaymentMethod>("bkash");
-  const [amount, setAmount] = useState(1000);
+  // Buyers send taka; the wallet is credited in dollars at today's rate.
+  const [amountBdt, setAmountBdt] = useState(1000);
   const [sender, setSender] = useState("");
   const [trx, setTrx] = useState("");
   const [ok, setOk] = useState(false);
 
   const m = PAYMENT_METHODS[method];
-  const low = amount < LIMITS.minDeposit;
+  const usdRate = settings?.usdRate ?? USD_RATE;
+  const minDeposit = settings?.minDeposit ?? LIMITS.minDeposit;
+  const credited = toUsd(amountBdt, usdRate);
+  const low = credited < minDeposit;
 
   const submit = async () => {
     if (!sender.trim() || !trx.trim() || low) {
-      toast.error("Fill in your number and TrxID");
+      toast.error(
+        low
+          ? `Minimum top-up is ${formatBdt(Math.ceil(minDeposit * usdRate))}`
+          : "Fill in your number and TrxID",
+      );
       return;
     }
     try {
@@ -40,7 +50,7 @@ export function DepositForm() {
         method,
         senderNumber: sender,
         trxId: trx,
-        amount,
+        amountBdt,
       }).unwrap();
       setOk(true);
       setSender("");
@@ -83,24 +93,33 @@ export function DepositForm() {
               </p>
             </div>
 
-            <Field label="Amount">
+            <Field
+              label="Amount you are sending"
+              hint={`Minimum ${formatBdt(Math.ceil(minDeposit * usdRate))} · $1 = ${formatBdt(
+                usdRate,
+              )}`}
+            >
               <SegmentedControl
-                value={String(amount)}
-                onChange={(v) => setAmount(Number(v))}
+                value={String(amountBdt)}
+                onChange={(v) => setAmountBdt(Number(v))}
                 segments={QUICK.map((q) => ({
                   value: String(q),
-                  label: formatMoney(q),
+                  label: formatBdt(q),
                 }))}
               />
               <Input
                 className="mt-2"
                 type="number"
-                min={LIMITS.minDeposit}
-                value={amount}
-                onChange={(e) => setAmount(Number(e.target.value) || 0)}
+                min={1}
+                value={amountBdt}
+                onChange={(e) => setAmountBdt(Number(e.target.value) || 0)}
                 suffix="৳"
                 invalid={low}
               />
+              <div className="mt-2 flex items-center justify-between rounded-lg bg-bg-subtle px-3 py-2 text-sm">
+                <span className="text-fg-muted">Credited to your wallet</span>
+                <span className="font-bold text-fg">{formatMoney(credited)}</span>
+              </div>
             </Field>
 
             <Field label={fill(t.buyer.senderNumber, { method: m.label })} required>
@@ -142,7 +161,7 @@ export function DepositForm() {
                 `Send money to the ${m.label} number shown`,
                 "Copy the Transaction ID (TrxID) from your SMS",
                 "Enter your number + TrxID and submit",
-                "Admin verifies and your balance is topped up",
+                `Admin verifies and your wallet is credited in dollars at ৳${usdRate} / $1`,
               ].map((s, i) => (
                 <li key={i} className="flex gap-2.5">
                   <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-bg-subtle text-[11px] font-bold text-fg-muted">

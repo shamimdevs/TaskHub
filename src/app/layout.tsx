@@ -13,7 +13,7 @@ export const metadata: Metadata = {
     template: `%s · ${APP_NAME}`,
   },
   description:
-    "Micro-task platform: workers earn Taka completing simple social tasks, buyers get 100% real human engagement.",
+    "Micro-task platform: workers earn dollars completing simple social tasks, buyers get 100% real human engagement.",
   applicationName: APP_NAME,
   appleWebApp: { capable: true, statusBarStyle: "default", title: APP_NAME },
 };

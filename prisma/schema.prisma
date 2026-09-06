@@ -1,0 +1,503 @@
+// TaskHub data model.
+// Mirrors the domain types in src/types/index.ts. Money is stored as Postgres
+// NUMERIC (Prisma Decimal) and converted to plain numbers at the API boundary
+// (see src/lib/api.ts `serialize`).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --------------------------------------------------------------------------
+// Enums
+// --------------------------------------------------------------------------
+
+enum Role {
+  worker
+  buyer
+  admin
+}
+
+enum UserStatus {
+  active
+  banned
+  restricted
+}
+
+enum Platform {
+  facebook
+  instagram
+  youtube
+  tiktok
+  twitter
+}
+
+enum TaskType {
+  follow
+  like
+  subscribe
+  comment
+  share
+  join_group
+  view
+  watch_time
+}
+
+enum CampaignStatus {
+  draft
+  pending_review
+  active
+  paused
+  completed
+  rejected
+  cancelled
+}
+
+enum SubmissionStatus {
+  pending
+  on_hold
+  approved
+  rejected
+  reversed
+}
+
+enum PaymentStatus {
+  pending
+  approved
+  rejected
+  paid
+}
+
+enum PaymentMethod {
+  bkash
+  nagad
+  rocket
+  manual
+}
+
+enum TxnType {
+  deposit
+  campaign_spend
+  task_reward
+  withdrawal
+  withdrawal_fee
+  referral_bonus
+  penalty
+  adjustment
+}
+
+enum TxnDirection {
+  credit
+  debit
+}
+
+enum TxnState {
+  completed
+  pending
+  reversed
+}
+
+enum NotificationKind {
+  info
+  success
+  warning
+  danger
+}
+
+enum ReferralStatus {
+  joined
+  active
+  qualified
+}
+
+// --------------------------------------------------------------------------
+// Better Auth core (User is extended with TaskHub fields)
+// --------------------------------------------------------------------------
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // --- TaskHub domain fields ---
+  role           Role       @default(worker)
+  /// False until the person has picked worker or buyer themselves. Google
+  /// sign-ups land here and are sent through /setup-role on first login.
+  roleChosen     Boolean    @default(false)
+  phone          String?
+  country        String     @default("Bangladesh")
+  status         UserStatus @default(active)
+  banReason      String?
+  balance        Decimal    @default(0) @db.Decimal(14, 2)
+  pendingBalance Decimal    @default(0) @db.Decimal(14, 2)
+  lifetimeEarned Decimal    @default(0) @db.Decimal(14, 2)
+  lifetimeSpent  Decimal    @default(0) @db.Decimal(14, 2)
+  referralCode   String     @unique
+  referredByCode String?
+  referredById   String?
+  referredBy     User?      @relation("UserReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referredUsers  User[]     @relation("UserReferrals")
+  lastActiveAt   DateTime   @default(now())
+
+  sessions       Session[]
+  accounts       Account[]
+  campaigns      Campaign[]
+  submissions    Submission[]        @relation("SubmissionWorker")
+  reviewed       Submission[]        @relation("SubmissionReviewer")
+  deposits       Deposit[]
+  withdrawals    Withdrawal[]
+  transactions   WalletTransaction[]
+  notifications  Notification[]
+  referralsMade  Referral[]          @relation("ReferralReferrer")
+  facebookPages  FacebookPage[]
+  socialAccounts SocialAccount[]
+
+  @@index([role])
+  @@index([status])
+  @@index([referredById])
+  @@index([createdAt])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  issuer                String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([issuer, accountId])
+  @@index([userId])
+  @@index([providerId])
+}
+
+model Verification {
+  id         String    @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+
+  @@index([identifier])
+}
+
+// --------------------------------------------------------------------------
+// TaskHub domain
+// --------------------------------------------------------------------------
+
+model Campaign {
+  id                String         @id @default(cuid())
+  buyerId           String
+  buyer             User           @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  buyerName         String
+  platform          Platform
+  type              TaskType
+  title             String
+  targetUrl         String
+  quantity          Int
+  delivered         Int            @default(0)
+  ratePerAction     Decimal        @db.Decimal(14, 4)
+  workerReward      Decimal        @db.Decimal(14, 4)
+  totalCost         Decimal        @db.Decimal(14, 2)
+  status            CampaignStatus @default(pending_review)
+  holdDays          Int
+  note              String?
+  /// Set when the campaign is verified automatically: the connected page it
+  /// targets, and the follower count captured the moment it went live.
+  pageId            String?
+  page              FacebookPage?  @relation(fields: [pageId], references: [id], onDelete: SetNull)
+  baselineFollowers Int?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  tasks       Task[]
+  submissions Submission[]
+
+  @@index([buyerId])
+  @@index([pageId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Task {
+  id           String    @id @default(cuid())
+  campaignId   String
+  campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  platform     Platform
+  type         TaskType
+  title        String
+  targetUrl    String
+  instructions String[]
+  reward       Decimal   @db.Decimal(14, 4)
+  holdDays     Int
+  slotsLeft    Int
+  buyerName    String
+  postedAt     DateTime  @default(now())
+  expiresAt    DateTime?
+
+  submissions Submission[]
+
+  @@index([campaignId])
+  @@index([slotsLeft])
+}
+
+model Submission {
+  id            String           @id @default(cuid())
+  taskId        String
+  task          Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  campaignId    String
+  campaign      Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  workerId      String
+  worker        User             @relation("SubmissionWorker", fields: [workerId], references: [id], onDelete: Cascade)
+  workerName    String
+  platform      Platform
+  type          TaskType
+  title         String
+  reward        Decimal          @db.Decimal(14, 4)
+  status        SubmissionStatus @default(pending)
+  proofUrl      String?
+  proofNote     String?
+  screenshotUrl String?
+  submittedAt   DateTime         @default(now())
+  holdUntil     DateTime
+  reviewedAt    DateTime?
+  reviewerNote  String?
+  reviewedById  String?
+  reviewedBy    User?            @relation("SubmissionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  /// Cleared by the follower-count checker rather than a person.
+  autoVerified  Boolean          @default(false)
+
+  @@index([workerId])
+  @@index([campaignId])
+  @@index([taskId])
+  @@index([status])
+  @@index([status, holdUntil])
+  @@index([submittedAt])
+}
+
+model Deposit {
+  id           String        @id @default(cuid())
+  buyerId      String
+  buyer        User          @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  buyerName    String
+  method       PaymentMethod
+  senderNumber String
+  trxId        String
+  /// What the buyer sent over bKash/Nagad, in BDT.
+  amountBdt    Decimal       @db.Decimal(14, 2)
+  /// BDT per 1 USD, locked when the deposit was submitted.
+  usdRate      Decimal       @db.Decimal(14, 2)
+  /// What lands in the wallet, in USD.
+  amount       Decimal       @db.Decimal(14, 2)
+  status       PaymentStatus @default(pending)
+  note         String?
+  reviewedById String?
+  createdAt    DateTime      @default(now())
+  reviewedAt   DateTime?
+
+  @@index([buyerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Withdrawal {
+  id            String        @id @default(cuid())
+  workerId      String
+  worker        User          @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  workerName    String
+  method        PaymentMethod
+  accountNumber String
+  /// Requested, fee and net are USD — the wallet currency.
+  amount        Decimal       @db.Decimal(14, 2)
+  fee           Decimal       @db.Decimal(14, 2)
+  net           Decimal       @db.Decimal(14, 2)
+  /// BDT per 1 USD, locked when the request was made.
+  usdRate       Decimal       @db.Decimal(14, 2)
+  /// What the admin actually sends to the bKash/Nagad number.
+  payoutBdt     Decimal       @db.Decimal(14, 2)
+  status        PaymentStatus @default(pending)
+  note          String?
+  reviewedById  String?
+  createdAt     DateTime      @default(now())
+  reviewedAt    DateTime?
+
+  @@index([workerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model WalletTransaction {
+  id           String       @id @default(cuid())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type         TxnType
+  direction    TxnDirection
+  amount       Decimal      @db.Decimal(14, 2)
+  balanceAfter Decimal      @db.Decimal(14, 2)
+  status       TxnState     @default(completed)
+  reference    String?
+  description  String
+  createdAt    DateTime     @default(now())
+
+  @@index([userId, createdAt])
+  @@index([type])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  kind      NotificationKind @default(info)
+  read      Boolean          @default(false)
+  href      String?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+}
+
+model Referral {
+  id             String         @id @default(cuid())
+  referrerId     String
+  referrer       User           @relation("ReferralReferrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referredUserId String?
+  name           String
+  status         ReferralStatus @default(joined)
+  earnedForYou   Decimal        @default(0) @db.Decimal(14, 2)
+  joinedAt       DateTime       @default(now())
+
+  @@index([referrerId])
+}
+
+/// One rate per platform + action. The buyer pays it and the worker earns it —
+/// the platform keeps nothing here, only the withdrawal commission.
+model RateCard {
+  id        String   @id @default(cuid())
+  platform  Platform
+  type      TaskType
+  /// USD per action (per hour for watch_time).
+  rate      Decimal  @db.Decimal(14, 4)
+  enabled   Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  @@unique([platform, type])
+  @@index([enabled])
+}
+
+model PlatformSettings {
+  id                  String   @id @default("singleton")
+  /// BDT per 1 USD. Admin can change this at any time; deposits and
+  /// withdrawals lock the rate that was live when they were created.
+  usdRate             Decimal  @db.Decimal(14, 2)
+  /// Money below is USD — the wallet currency.
+  minDeposit          Decimal  @db.Decimal(14, 2)
+  minWithdraw         Decimal  @db.Decimal(14, 2)
+  withdrawFeePct      Decimal  @db.Decimal(6, 2)
+  holdDays            Int
+  referralBonus       Decimal  @db.Decimal(14, 4)
+  autoApproveDeposits Boolean  @default(false)
+  /// Master switch for hands-off Facebook follow campaigns: live without
+  /// review, submissions cleared by the follower count, drops reversed.
+  autoVerify          Boolean  @default(true)
+  /// How long a submission waits for the follower count to move before it is
+  /// auto-rejected, in minutes.
+  autoVerifyGraceMins Int      @default(45)
+  maintenanceMode     Boolean  @default(false)
+  updatedAt           DateTime @updatedAt
+}
+
+// --------------------------------------------------------------------------
+// Facebook integration
+// --------------------------------------------------------------------------
+
+/// A Facebook Page a buyer connected through Facebook Login. The page token
+/// lets us read the follower count, which is the only signal Facebook gives:
+/// there is no API that lists *who* follows a page.
+model FacebookPage {
+  id            String    @id @default(cuid())
+  ownerId       String
+  owner         User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  pageId        String    @unique
+  name          String
+  username      String?
+  accessToken   String
+  /// Last count we read, and when.
+  followers     Int       @default(0)
+  lastCheckedAt DateTime?
+  /// Last Graph error, cleared on the next good read.
+  lastError     String?
+  connectedAt   DateTime  @default(now())
+
+  campaigns Campaign[]
+  samples   PageFollowerSample[]
+
+  @@index([ownerId])
+}
+
+/// One follower-count reading. Kept so a campaign can be settled against the
+/// history and a drop during the hold window is provable.
+model PageFollowerSample {
+  id        String       @id @default(cuid())
+  pageId    String
+  page      FacebookPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  followers Int
+  takenAt   DateTime     @default(now())
+
+  @@index([pageId, takenAt])
+}
+
+/// A worker's own social account, linked through the platform's login. It is
+/// what a task proof is checked against: the profile link comes from the
+/// connected account instead of being typed, and one social account can only
+/// ever belong to one TaskHub worker.
+model SocialAccount {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    Platform
+  /// The provider's own id for this person (app-scoped on Facebook).
+  providerId  String
+  name        String
+  /// Public profile link. Facebook only returns this with the user_link
+  /// permission, so it can start out empty and be filled in once.
+  profileUrl  String?
+  connectedAt DateTime @default(now())
+
+  @@unique([provider, providerId])
+  @@unique([userId, provider])
+  @@index([userId])
+}

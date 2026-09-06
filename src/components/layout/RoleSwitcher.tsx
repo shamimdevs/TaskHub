@@ -1,60 +1,56 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { FlaskConical } from "lucide-react";
-import { useAppDispatch, useAppSelector } from "@/redux/hooks";
-import { setRole } from "@/redux/features/session/sessionSlice";
-import { ROLE_META } from "@/lib/nav";
-import type { Role } from "@/types";
+import { LogOut } from "lucide-react";
+import { Avatar } from "@/components/ui/Misc";
+import { authClient } from "@/lib/auth-client";
+import { useGetMeQuery } from "@/redux/features/session/sessionApi";
 import { cn } from "@/lib/utils";
 
-const ROLES: Role[] = ["worker", "buyer", "admin"];
-
 /**
- * Design-pass helper: no auth yet, so this lets you jump between the three
- * panels. Remove once real auth lands.
+ * Account card shown at the bottom of the sidebar / mobile drawer: identifies
+ * the signed-in user and signs them out.
  */
 export function RoleSwitcher({ compact }: { compact?: boolean }) {
-  const role = useAppSelector((s) => s.session.role);
-  const dispatch = useAppDispatch();
+  const { data: me } = useGetMeQuery();
   const router = useRouter();
+  const [busy, setBusy] = useState(false);
 
-  const go = (r: Role) => {
-    dispatch(setRole(r));
-    router.push(ROLE_META[r].home);
-  };
+  async function signOut() {
+    setBusy(true);
+    try {
+      await authClient.signOut();
+    } finally {
+      router.replace("/login");
+      router.refresh();
+    }
+  }
 
   return (
     <div
       className={cn(
-        "rounded-xl border border-dashed border-border bg-card-muted p-2",
+        "rounded-xl border border-border bg-card-muted p-2",
         compact ? "" : "space-y-2",
       )}
     >
-      {!compact && (
-        <p className="flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-fg-subtle">
-          <FlaskConical size={12} /> Preview as
-        </p>
-      )}
-      <div className="grid grid-cols-3 gap-1">
-        {ROLES.map((r) => {
-          const active = r === role;
-          return (
-            <button
-              key={r}
-              onClick={() => go(r)}
-              className={cn(
-                "rounded-lg px-2 py-1.5 text-xs font-medium capitalize transition-colors",
-                active
-                  ? "bg-fg text-bg"
-                  : "text-fg-muted hover:bg-bg-subtle hover:text-fg",
-              )}
-            >
-              {ROLE_META[r].label.replace("Super ", "")}
-            </button>
-          );
-        })}
+      <div className="flex items-center gap-2.5 px-1 py-1">
+        <Avatar name={me?.name ?? "TaskHub user"} src={me?.avatarUrl} size={32} />
+        <div className="min-w-0 flex-1 leading-tight">
+          <p className="truncate text-sm font-semibold text-fg">
+            {me?.name ?? "TaskHub user"}
+          </p>
+          <p className="truncate text-[11px] text-fg-muted">{me?.email ?? ""}</p>
+        </div>
       </div>
+      <button
+        onClick={signOut}
+        disabled={busy}
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold text-danger transition-colors hover:bg-danger-soft disabled:opacity-60"
+      >
+        <LogOut size={14} />
+        {busy ? "Signing out…" : "Sign out"}
+      </button>
     </div>
   );
 }

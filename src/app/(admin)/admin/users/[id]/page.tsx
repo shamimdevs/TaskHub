@@ -117,7 +117,7 @@ export default function AdminUserDetail({
                     <Input
                       type="number"
                       placeholder="e.g. -15"
-                      suffix="৳"
+                      suffix="$"
                       value={adjust}
                       onChange={(e) => setAdjust(e.target.value)}
                     />

@@ -2,7 +2,7 @@
 
 import { use, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, ExternalLink, ShieldAlert } from "lucide-react";
+import { BadgeCheck, CheckCircle2, ExternalLink, ShieldAlert } from "lucide-react";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { QueryBoundary } from "@/components/ui/QueryBoundary";
@@ -14,12 +14,14 @@ import { PlatformChip } from "@/components/ui/StatusBadge";
 import { useToast } from "@/components/ui/Toast";
 import { useGetTaskQuery } from "@/redux/features/tasks/tasksApi";
 import { useCreateSubmissionMutation } from "@/redux/features/submissions/submissionsApi";
+import { useGetSocialAccountsQuery } from "@/redux/features/social/socialApi";
 import { fill, t } from "@/lib/i18n/en";
 import { formatMoney } from "@/lib/utils";
 
 export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]">) {
   const { id } = use(params);
   const query = useGetTaskQuery(id);
+  const { data: social } = useGetSocialAccountsQuery();
   const [submit, { isLoading }] = useCreateSubmissionMutation();
   const toast = useToast();
   const router = useRouter();
@@ -29,13 +31,14 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
   const [proofNote, setProofNote] = useState("");
   const [done, setDone] = useState(false);
 
-  const onSubmit = async (taskId: string) => {
-    if (!proofUrl.trim()) {
+  const onSubmit = async (taskId: string, linkedUrl?: string) => {
+    const url = linkedUrl ?? proofUrl.trim();
+    if (!url) {
       toast.error("Add your proof link first");
       return;
     }
     try {
-      await submit({ taskId, proofUrl, proofNote }).unwrap();
+      await submit({ taskId, proofUrl: url, proofNote }).unwrap();
       setDone(true);
       toast.success(t.worker.submissionSent);
       setTimeout(() => router.push("/worker/submissions"), 1200);
@@ -52,7 +55,13 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
       />
 
       <QueryBoundary query={query} isEmpty={() => false}>
-        {(task) => (
+        {(task) => {
+          // A linked account is the proof: the profile link comes from it, so
+          // there is nothing to type and nothing to mistype.
+          const linked = social?.accounts.find(
+            (a) => a.provider === task.platform && a.profileUrl,
+          );
+          return (
           <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
             <div className="space-y-4">
               <Card>
@@ -108,13 +117,41 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
                       your proof.
                     </Alert>
                   )}
-                  <Field label={t.worker.proofUrl} required>
-                    <Input
-                      placeholder="https://instagram.com/yourhandle"
-                      value={proofUrl}
-                      onChange={(e) => setProofUrl(e.target.value)}
-                    />
-                  </Field>
+                  {linked ? (
+                    <div className="rounded-lg border border-border bg-bg-subtle p-3">
+                      <p className="flex items-center gap-1.5 text-sm font-semibold text-fg">
+                        <BadgeCheck size={15} className="text-brand" />
+                        Submitting as {linked.name}
+                      </p>
+                      <a
+                        href={linked.profileUrl!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-0.5 block truncate text-xs font-medium text-brand hover:underline"
+                      >
+                        {linked.profileUrl}
+                      </a>
+                      <p className="mt-1 text-[11px] text-fg-subtle">
+                        Your proof link comes from your linked account.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <Field label={t.worker.proofUrl} required>
+                        <Input
+                          placeholder="https://facebook.com/yourprofile"
+                          value={proofUrl}
+                          onChange={(e) => setProofUrl(e.target.value)}
+                        />
+                      </Field>
+                      <Alert tone="info">
+                        <a href="/worker/profile" className="font-semibold underline">
+                          Link your account
+                        </a>{" "}
+                        and your proof link fills itself in from now on.
+                      </Alert>
+                    </>
+                  )}
                   <Field label={t.worker.proofNote}>
                     <Textarea
                       placeholder="e.g. Done from my main account @rakib"
@@ -127,7 +164,7 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
                     loading={isLoading}
                     disabled={done}
                     icon={done ? CheckCircle2 : undefined}
-                    onClick={() => onSubmit(task.id)}
+                    onClick={() => onSubmit(task.id, linked?.profileUrl ?? undefined)}
                   >
                     {done ? "Submitted" : t.worker.submitProof}
                   </Button>
@@ -165,7 +202,8 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
               </Alert>
             </div>
           </div>
-        )}
+          );
+        }}
       </QueryBoundary>
     </>
   );

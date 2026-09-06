@@ -20,30 +20,88 @@ export const SUPPORT = {
   address: "Dhaka, Bangladesh",
 } as const;
 
-/** Core business rules from the brief. */
-export const PRICING = {
-  /** Buyer pays per 1,000 followers/actions. */
-  clientRatePer1k: 300,
-  /** Buyer pays per single action. */
-  clientRatePerAction: 0.3,
-  /** Worker earns per completed action. */
-  workerRewardPerAction: 0.15,
-  /** Gross margin the platform keeps. */
-  grossMarginPct: 50,
-} as const;
+/**
+ * Every price, balance, reward and payout on the platform is US dollars, and
+ * that is the only currency the UI shows. Local cash (bKash / Nagad taka) is
+ * converted at `PlatformSettings.usdRate` and appears on exactly two screens:
+ * deposit and withdraw.
+ */
+export const USD_RATE = 120;
 
+/**
+ * Default price per action, in USD, by platform and action. The buyer pays it
+ * and the worker earns it — the platform keeps nothing here, only the
+ * withdrawal commission in `FEES`. Admins edit these live in the rate card;
+ * these values only seed a fresh install.
+ *
+ * `watch_time` is priced per hour, `view` per view, everything else per action.
+ */
+export const RATE_CARD: Record<Platform, Partial<Record<TaskType, number>>> = {
+  facebook: {
+    follow: 0.01,
+    like: 0.005,
+    comment: 0.02,
+    share: 0.012,
+    join_group: 0.015,
+  },
+  instagram: {
+    follow: 0.012,
+    like: 0.006,
+    comment: 0.022,
+    share: 0.014,
+  },
+  youtube: {
+    subscribe: 0.02,
+    like: 0.008,
+    comment: 0.025,
+    view: 0.003,
+    watch_time: 0.08,
+  },
+  tiktok: {
+    follow: 0.011,
+    like: 0.005,
+    comment: 0.02,
+    share: 0.012,
+    view: 0.002,
+  },
+  twitter: {
+    follow: 0.012,
+    like: 0.006,
+    comment: 0.022,
+    share: 0.012,
+  },
+};
+
+/** Every (platform, action) pair the rate card covers, in a stable order. */
+export const RATE_CARD_ENTRIES = (Object.keys(RATE_CARD) as Platform[]).flatMap(
+  (platform) =>
+    (Object.keys(RATE_CARD[platform]) as TaskType[]).map((type) => ({
+      platform,
+      type,
+      rate: RATE_CARD[platform][type]!,
+    })),
+);
+
+/** Cheapest and dearest default action — used in public pricing copy. */
+export const RATE_RANGE = {
+  min: Math.min(...RATE_CARD_ENTRIES.map((e) => e.rate)),
+  max: Math.max(...RATE_CARD_ENTRIES.map((e) => e.rate)),
+};
+
+/** The platform's only commission: deducted when a worker withdraws. */
 export const FEES = {
   withdrawFeePct: 5,
 } as const;
 
+/** All USD — `minDeposit` is what a top-up has to be worth to be credited. */
 export const LIMITS = {
-  minWithdraw: 50,
-  minDeposit: 100,
+  minWithdraw: 1,
+  minDeposit: 1,
   minCampaignQty: 100,
   maxCampaignQty: 1_000_000,
   holdDaysDefault: 4,
   holdDaysRange: [3, 5] as const,
-  referralBonus: 5,
+  referralBonus: 0.05,
 } as const;
 
 export const PLATFORMS: Record<
@@ -63,27 +121,40 @@ export const PLATFORMS: Record<
   youtube: {
     label: "YouTube",
     color: "#FF0000",
-    actions: ["subscribe", "like", "comment"],
+    actions: ["subscribe", "like", "comment", "view", "watch_time"],
   },
   tiktok: {
     label: "TikTok",
     color: "#010101",
-    actions: ["follow", "like", "comment", "share"],
+    actions: ["follow", "like", "comment", "share", "view"],
   },
   twitter: {
     label: "X (Twitter)",
     color: "#0F1419",
-    actions: ["follow", "like", "share"],
+    actions: ["follow", "like", "comment", "share"],
   },
 };
 
-export const TASK_TYPES: Record<TaskType, { label: string; verb: string }> = {
-  follow: { label: "Follow", verb: "Follow the page" },
-  like: { label: "Like", verb: "Like the post" },
-  subscribe: { label: "Subscribe", verb: "Subscribe to the channel" },
-  comment: { label: "Comment", verb: "Leave a genuine comment" },
-  share: { label: "Share", verb: "Share the post" },
-  join_group: { label: "Join group", verb: "Join the group" },
+export const TASK_TYPES: Record<
+  TaskType,
+  { label: string; verb: string; unit: string }
+> = {
+  follow: { label: "Follow", verb: "Follow the page", unit: "follows" },
+  like: { label: "Like", verb: "Like the post", unit: "likes" },
+  subscribe: {
+    label: "Subscribe",
+    verb: "Subscribe to the channel",
+    unit: "subscribers",
+  },
+  comment: { label: "Comment", verb: "Leave a genuine comment", unit: "comments" },
+  share: { label: "Share", verb: "Share the post", unit: "shares" },
+  join_group: { label: "Join group", verb: "Join the group", unit: "members" },
+  view: { label: "View", verb: "Watch the video", unit: "views" },
+  watch_time: {
+    label: "Watch time",
+    verb: "Watch the video for at least an hour",
+    unit: "hours",
+  },
 };
 
 type Tone = "success" | "warning" | "danger" | "info" | "neutral" | "brand";

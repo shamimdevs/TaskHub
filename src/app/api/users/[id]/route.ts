@@ -1,31 +1,36 @@
-import { db, json, tick } from "@/app/api/_data/db";
+import { prisma } from "@/lib/prisma";
+import { requireApiRole, isResponse, json, apiError, parseBody } from "@/lib/api";
+import { updateUserSchema } from "@/lib/validation";
+import { adminUpdateUser } from "@/lib/domain/users";
+import { toUser } from "@/lib/dto";
+import { DomainError } from "@/lib/domain/errors";
 
-export async function GET(_req: Request, ctx: RouteContext<"/api/users/[id]">) {
-  await tick();
+export async function GET(req: Request, ctx: RouteContext<"/api/users/[id]">) {
+  const auth = await requireApiRole(req, "admin");
+  if (isResponse(auth)) return auth;
   const { id } = await ctx.params;
-  const user = db.users.find((u) => u.id === id);
-  if (!user) return json({ error: "Not found" }, { status: 404 });
-  return json(user);
+
+  const user = await prisma.user.findUnique({ where: { id } });
+  if (!user) return apiError(404, "User not found");
+  return json(toUser(user));
 }
 
 export async function PATCH(req: Request, ctx: RouteContext<"/api/users/[id]">) {
-  await tick();
+  const auth = await requireApiRole(req, "admin");
+  if (isResponse(auth)) return auth;
   const { id } = await ctx.params;
-  const { action, reason, amount } = (await req.json()) as {
-    action: "ban" | "unban" | "adjust";
-    reason?: string;
-    amount?: number;
-  };
-  const user = db.users.find((u) => u.id === id);
-  if (!user) return json({ error: "Not found" }, { status: 404 });
-  if (action === "ban") {
-    user.status = "banned";
-    user.banReason = reason || "Policy violation";
-  } else if (action === "unban") {
-    user.status = "active";
-    user.banReason = undefined;
-  } else if (action === "adjust") {
-    user.balance = +(user.balance + (Number(amount) || 0)).toFixed(2);
+
+  const body = await parseBody(req, updateUserSchema);
+  if (isResponse(body)) return body;
+
+  try {
+    const user = await adminUpdateUser(id, body.action, {
+      reason: body.reason,
+      amount: body.amount,
+    });
+    return json(toUser(user));
+  } catch (e) {
+    if (e instanceof DomainError) return apiError(e.status, e.message);
+    throw e;
   }
-  return json(user);
 }

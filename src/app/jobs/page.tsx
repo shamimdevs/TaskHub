@@ -11,14 +11,18 @@ export const metadata: Metadata = {
   description: `Open micro-tasks you can complete for cash on ${APP_NAME}.`,
 };
 
+// Open jobs come from the database, so render at request time rather than
+// prerendering at build (which would need a live DB and go stale).
+export const dynamic = "force-dynamic";
+
 export default async function JobsPage({
   searchParams,
 }: {
   searchParams: Promise<{ platform?: string }>;
 }) {
   const { platform = "all" } = await searchParams;
-  const jobs = listJobs(platform);
-  const available = jobPlatforms();
+  const jobs = await listJobs(platform);
+  const available = await jobPlatforms();
 
   const filters = [
     { value: "all", label: "All" },

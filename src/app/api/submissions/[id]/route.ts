@@ -1,20 +1,21 @@
-import { db, json, tick } from "@/app/api/_data/db";
+import { requireApiRole, isResponse, json, apiError, parseBody } from "@/lib/api";
+import { reviewSubmissionSchema } from "@/lib/validation";
+import { reviewSubmission } from "@/lib/domain/submissions";
+import { DomainError } from "@/lib/domain/errors";
 
-export async function PATCH(
-  req: Request,
-  ctx: RouteContext<"/api/submissions/[id]">,
-) {
-  await tick();
+export async function PATCH(req: Request, ctx: RouteContext<"/api/submissions/[id]">) {
+  const auth = await requireApiRole(req, "admin");
+  if (isResponse(auth)) return auth;
   const { id } = await ctx.params;
-  const { action, note } = (await req.json()) as {
-    action: "approve" | "reject" | "penalize";
-    note?: string;
-  };
-  const sub = db.submissions.find((s) => s.id === id);
-  if (!sub) return json({ error: "Not found" }, { status: 404 });
-  sub.status =
-    action === "approve" ? "approved" : action === "reject" ? "rejected" : "reversed";
-  sub.reviewedAt = new Date().toISOString();
-  sub.reviewerNote = note;
-  return json(sub);
+
+  const body = await parseBody(req, reviewSubmissionSchema);
+  if (isResponse(body)) return body;
+
+  try {
+    const submission = await reviewSubmission(auth.id, id, body.action, body.note);
+    return json(submission);
+  } catch (e) {
+    if (e instanceof DomainError) return apiError(e.status, e.message);
+    throw e;
+  }
 }

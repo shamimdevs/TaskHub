@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Rocket } from "lucide-react";
+import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Link2, Rocket, Zap } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Field } from "@/components/ui/Field";
 import { Input, Select, Textarea } from "@/components/ui/Input";
@@ -12,7 +12,9 @@ import { Alert } from "@/components/ui/Misc";
 import { useToast } from "@/components/ui/Toast";
 import { useCreateCampaignMutation } from "@/redux/features/campaigns/campaignsApi";
 import { useGetWalletQuery } from "@/redux/features/wallet/walletApi";
-import { LIMITS, PLATFORMS, PRICING, TASK_TYPES } from "@/lib/constants";
+import { useGetSettingsQuery } from "@/redux/features/settings/settingsApi";
+import { useGetFacebookPagesQuery } from "@/redux/features/facebook/facebookApi";
+import { LIMITS, PLATFORMS, RATE_CARD, TASK_TYPES } from "@/lib/constants";
 import { t } from "@/lib/i18n/en";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import type { Platform, TaskType } from "@/types";
@@ -24,6 +26,9 @@ export function CampaignForm() {
   const toast = useToast();
   const [create, { isLoading }] = useCreateCampaignMutation();
   const { data: wallet } = useGetWalletQuery();
+  const { data: settings } = useGetSettingsQuery();
+  const { data: facebook } = useGetFacebookPagesQuery();
+  const connectStatus = useSearchParams().get("fb");
 
   const [platform, setPlatform] = useState<Platform>("facebook");
   const [type, setType] = useState<TaskType>("follow");
@@ -31,20 +36,42 @@ export function CampaignForm() {
   const [url, setUrl] = useState("");
   const [qty, setQty] = useState(1000);
   const [note, setNote] = useState("");
+  const [pageId, setPageId] = useState("");
 
-  const allowedTypes = PLATFORMS[platform].actions;
+  // Live prices from the admin rate card; the seeded defaults stand in until
+  // the settings request lands. A paused action is priced 0 and hidden.
+  const rateOf = (p: Platform, action: TaskType) => {
+    const row = settings?.rates.find(
+      (r) => r.platform === p && r.type === action,
+    );
+    if (row) return row.enabled ? row.rate : 0;
+    return RATE_CARD[p]?.[action] ?? 0;
+  };
+
+  const offered = PLATFORMS[platform].actions.filter((a) => rateOf(platform, a) > 0);
+  const allowedTypes = offered.length ? offered : PLATFORMS[platform].actions;
   const effType = allowedTypes.includes(type) ? type : allowedTypes[0];
 
-  const cost = useMemo(
-    () => +(qty * PRICING.clientRatePerAction).toFixed(2),
-    [qty],
-  );
+  const rate = rateOf(platform, effType);
+  const cost = +(qty * rate).toFixed(2);
   const balance = wallet?.user.balance ?? 0;
   const short = cost > balance;
 
+  // Facebook follows are the one combination that can run hands-off: the buyer
+  // connects the page, and the follower count clears every submission.
+  const canAutoVerify =
+    platform === "facebook" && effType === "follow" && (settings?.autoVerify ?? true);
+  const pages = facebook?.pages ?? [];
+  const selectedPage = pages.find((pg) => pg.id === pageId);
+  const autoMode = canAutoVerify && Boolean(selectedPage);
+
   const launch = async () => {
-    if (!url.trim() || !title.trim()) {
-      toast.error("Add a title and target link");
+    if (!title.trim()) {
+      toast.error("Add a campaign title");
+      return;
+    }
+    if (!autoMode && !url.trim()) {
+      toast.error("Add a target link");
       return;
     }
     if (short) {
@@ -56,11 +83,14 @@ export function CampaignForm() {
         platform,
         type: effType,
         title,
-        targetUrl: url,
+        targetUrl: autoMode ? selectedPage!.url : url,
         quantity: qty,
         note,
+        pageId: autoMode ? selectedPage!.id : undefined,
       }).unwrap();
-      toast.success("Campaign submitted for review");
+      toast.success(
+        autoMode ? "Campaign is live" : "Campaign submitted for review",
+      );
       router.push(`/buyer/campaigns/${c.id}`);
     } catch {
       toast.error(t.common.somethingWrong);
@@ -112,13 +142,77 @@ export function CampaignForm() {
               />
             </Field>
 
-            <Field label={t.buyer.targetUrl} hint={t.buyer.targetUrlHint} required>
-              <Input
-                placeholder={`https://${platform}.com/yourpage`}
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-              />
-            </Field>
+            {canAutoVerify && (
+              <Field
+                label="Facebook page"
+                hint="Connect the page and the campaign runs itself — no review, and every follow is checked against your follower count."
+              >
+                {connectStatus === "connected" && (
+                  <Alert tone="success">Facebook page connected.</Alert>
+                )}
+                {connectStatus === "no_pages" && (
+                  <Alert tone="warning">
+                    That Facebook account does not administer any page.
+                  </Alert>
+                )}
+                {(connectStatus === "failed" || connectStatus === "invalid_state") && (
+                  <Alert tone="danger">
+                    Could not connect to Facebook. Please try again.
+                  </Alert>
+                )}
+
+                {pages.length > 0 && (
+                  <Select
+                    value={pageId}
+                    onChange={(e) => setPageId(e.target.value)}
+                  >
+                    <option value="">Verify manually (paste a link)</option>
+                    {pages.map((pg) => (
+                      <option key={pg.id} value={pg.id}>
+                        {pg.name} · {formatNumber(pg.followers)} followers
+                      </option>
+                    ))}
+                  </Select>
+                )}
+
+                {facebook?.configured !== false && (
+                  <a
+                    href="/api/integrations/facebook/connect"
+                    className="mt-2 flex items-center justify-center gap-2 rounded-lg border border-border-strong bg-card px-4 py-2.5 text-sm font-semibold text-fg transition-colors hover:bg-bg-subtle"
+                  >
+                    <Link2 size={15} />
+                    {pages.length ? "Connect another page" : "Connect Facebook page"}
+                  </a>
+                )}
+                {facebook?.configured === false && (
+                  <Alert tone="info">
+                    Facebook auto-verification is not configured on this server.
+                  </Alert>
+                )}
+              </Field>
+            )}
+
+            {autoMode ? (
+              <Alert tone="success">
+                <span className="flex items-start gap-2">
+                  <Zap size={15} className="mt-0.5 shrink-0" />
+                  <span>
+                    Workers will be sent to{" "}
+                    <span className="font-semibold">{selectedPage!.url}</span>.
+                    The campaign goes live immediately and rewards clear on their
+                    own as your follower count moves.
+                  </span>
+                </span>
+              </Alert>
+            ) : (
+              <Field label={t.buyer.targetUrl} hint={t.buyer.targetUrlHint} required>
+                <Input
+                  placeholder={`https://${platform}.com/yourpage`}
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                />
+              </Field>
+            )}
 
             <Field label={t.buyer.quantity}>
               <SegmentedControl
@@ -135,7 +229,7 @@ export function CampaignForm() {
                 min={LIMITS.minCampaignQty}
                 value={qty}
                 onChange={(e) => setQty(Number(e.target.value) || 0)}
-                suffix={TASK_TYPES[effType].label.toLowerCase() + "s"}
+                suffix={TASK_TYPES[effType].unit}
               />
             </Field>
 
@@ -154,15 +248,16 @@ export function CampaignForm() {
         <Card>
           <CardHeader title={t.buyer.costSummary} />
           <CardBody className="space-y-2 text-sm">
-            <Row label={t.buyer.ratePerAction} value={formatMoney(PRICING.clientRatePerAction)} />
+            <Row
+              label={`${t.buyer.ratePerAction} · ${PLATFORMS[platform].label} ${TASK_TYPES[
+                effType
+              ].label.toLowerCase()}`}
+              value={formatMoney(rate)}
+            />
             <Row label={t.buyer.quantity} value={formatNumber(qty)} />
             <div className="my-2 border-t border-border" />
             <Row label={t.buyer.subtotal} value={formatMoney(cost)} strong />
-            <Row
-              label="Your balance"
-              value={formatMoney(balance)}
-              muted
-            />
+            <Row label="Your balance" value={formatMoney(balance)} muted />
           </CardBody>
         </Card>
 

@@ -15,7 +15,7 @@ import {
   useReviewWithdrawalMutation,
 } from "@/redux/features/withdrawals/withdrawalsApi";
 import { PAYMENT_METHODS } from "@/lib/constants";
-import { formatMoney, formatDateTime } from "@/lib/utils";
+import { formatBdt, formatMoney, formatDateTime } from "@/lib/utils";
 
 type Filter = "pending" | "approved" | "paid" | "all";
 
@@ -94,6 +94,11 @@ export default function AdminWithdrawalsPage() {
                     <Meta label="Fee">− {formatMoney(w.fee)}</Meta>
                     <Meta label="Net payout">
                       <span className="font-bold text-fg">{formatMoney(w.net)}</span>
+                    </Meta>
+                    <Meta label={`Send (@ ৳${w.usdRate})`}>
+                      <span className="font-bold text-fg">
+                        {formatBdt(w.payoutBdt)}
+                      </span>
                     </Meta>
                     <Meta label="Method">
                       <Badge tone="neutral">

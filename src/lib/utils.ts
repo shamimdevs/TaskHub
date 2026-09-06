@@ -30,15 +30,40 @@ export function cn(...inputs: ClassInput[]): string {
   return out.join(" ");
 }
 
+/**
+ * Wallet money is USD. Rewards can be fractions of a cent, so amounts under a
+ * dollar keep up to four decimals: $12.50, $0.02, $0.005.
+ */
+export function formatMoney(amount: number, opts?: { sign?: boolean }): string {
+  const sign = opts?.sign && amount > 0 ? "+" : amount < 0 ? "−" : "";
+  const abs = Math.abs(amount);
+  const fmt = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: abs > 0 && abs < 1 ? 4 : 2,
+  });
+  return `${sign}$${fmt.format(abs)}`;
+}
+
 const BDT = new Intl.NumberFormat("en-BD", {
   maximumFractionDigits: 2,
   minimumFractionDigits: 0,
 });
 
-/** Format an amount as Bangladeshi Taka, e.g. ৳1,250 or ৳0.15 */
-export function formatMoney(amount: number, opts?: { sign?: boolean }): string {
+/** Cash still moves in taka — bKash / Nagad amounts, e.g. ৳1,250. */
+export function formatBdt(amount: number, opts?: { sign?: boolean }): string {
   const sign = opts?.sign && amount > 0 ? "+" : amount < 0 ? "−" : "";
   return `${sign}৳${BDT.format(Math.abs(amount))}`;
+}
+
+/** Taka -> dollars at `rate` BDT per USD, rounded to the cent. */
+export function toUsd(bdt: number, rate: number): number {
+  if (!rate) return 0;
+  return Math.round((bdt / rate) * 100) / 100;
+}
+
+/** Dollars -> taka at `rate` BDT per USD, rounded to the taka. */
+export function toBdt(usd: number, rate: number): number {
+  return Math.round(usd * rate);
 }
 
 const NUM = new Intl.NumberFormat("en-US");

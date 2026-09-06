@@ -17,7 +17,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { QueryBoundary } from "@/components/ui/QueryBoundary";
 import { MiniBarChart } from "@/components/panels/worker/MiniBarChart";
 import { useGetKpisQuery } from "@/redux/features/kpis/kpisApi";
-import { compactNumber, formatMoney, formatNumber } from "@/lib/utils";
+import { compactNumber, formatNumber } from "@/lib/utils";
 import { t } from "@/lib/i18n/en";
 
 export default function AdminDashboard() {
@@ -27,7 +27,7 @@ export default function AdminDashboard() {
     <>
       <PageHeader
         title={t.admin.overview}
-        description="Revenue, users and everything that needs review"
+        description="Commission, users and everything that needs review"
       />
 
       <QueryBoundary query={query} isEmpty={() => false}>
@@ -35,25 +35,25 @@ export default function AdminDashboard() {
           <>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <StatCard
-                label={t.admin.grossRevenue}
-                value={`৳${compactNumber(k.grossRevenue)}`}
-                icon={TrendingUp}
-              />
-              <StatCard
-                label={t.admin.netProfit}
-                value={`৳${compactNumber(k.netProfit)}`}
+                label={t.admin.commissionEarned}
+                value={`$${compactNumber(k.commissionEarned)}`}
                 icon={Coins}
                 tone="brand"
               />
               <StatCard
-                label={t.admin.margin}
-                value={`${k.marginPct}%`}
+                label={t.admin.commissionRate}
+                value={`${k.withdrawFeePct}%`}
                 icon={Percent}
                 tone="accent"
               />
               <StatCard
+                label={t.admin.platformVolume}
+                value={`$${compactNumber(k.platformVolume)}`}
+                icon={TrendingUp}
+              />
+              <StatCard
                 label={t.admin.payoutsPaid}
-                value={`৳${compactNumber(k.payoutsPaid)}`}
+                value={`$${compactNumber(k.payoutsPaid)}`}
                 icon={Wallet}
                 tone="neutral"
               />
@@ -62,15 +62,15 @@ export default function AdminDashboard() {
             <div className="mt-4 grid gap-4 lg:grid-cols-3">
               <Card className="lg:col-span-2">
                 <CardHeader
-                  title="Revenue vs payout"
+                  title="Commission vs payout"
                   description="Last 12 months"
                 />
                 <CardBody>
                   <MiniBarChart
                     height={160}
-                    data={k.revenueSeries.map((r) => ({
+                    data={k.commissionSeries.map((r) => ({
                       label: r.label,
-                      value: r.revenue,
+                      value: r.commission,
                     }))}
                   />
                 </CardBody>

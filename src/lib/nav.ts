@@ -67,7 +67,7 @@ export const ROLE_META: Record<
     label: "Worker",
     home: "/worker/dashboard",
     icon: BadgeDollarSign,
-    blurb: "Complete tasks, earn Taka",
+    blurb: "Complete tasks, earn dollars",
   },
   buyer: {
     label: "Buyer",

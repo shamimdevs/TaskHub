@@ -8,13 +8,17 @@ import { getJob } from "@/lib/jobs";
 import { APP_NAME, LIMITS, TASK_TYPES } from "@/lib/constants";
 import { formatMoney, formatDate, relativeTime } from "@/lib/utils";
 
+// Open jobs come from the database, so render at request time rather than
+// prerendering at build (which would need a live DB and go stale).
+export const dynamic = "force-dynamic";
+
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const job = getJob(id);
+  const job = await getJob(id);
   return {
     title: job ? job.title : "Job not found",
     description: job
@@ -29,7 +33,7 @@ export default async function JobDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const job = getJob(id);
+  const job = await getJob(id);
   if (!job) notFound();
 
   const facts = [

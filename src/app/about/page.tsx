@@ -10,7 +10,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { MarketingShell } from "@/components/marketing/MarketingShell";
-import { APP_NAME, FEES, LIMITS, PRICING } from "@/lib/constants";
+import { APP_NAME, FEES, LIMITS, RATE_RANGE } from "@/lib/constants";
 import { formatMoney } from "@/lib/utils";
 
 export const metadata: Metadata = {
@@ -19,7 +19,11 @@ export const metadata: Metadata = {
 };
 
 const STATS = [
-  { icon: HandCoins, value: formatMoney(PRICING.workerRewardPerAction), label: "Earned per verified action" },
+  {
+    icon: HandCoins,
+    value: `${formatMoney(RATE_RANGE.min)}–${formatMoney(RATE_RANGE.max)}`,
+    label: "Earned per verified action",
+  },
   { icon: Wallet, value: formatMoney(LIMITS.minWithdraw), label: "Minimum withdrawal" },
   { icon: Clock, value: `${LIMITS.holdDaysRange[0]}–${LIMITS.holdDaysRange[1]} days`, label: "Verification hold" },
   { icon: ShieldCheck, value: `${FEES.withdrawFeePct}%`, label: "Withdrawal fee" },
@@ -62,7 +66,7 @@ export default function AboutPage() {
         economy. Creators and small businesses use it to grow their YouTube
         channels &mdash; real subscribers, watch time, views and comments &mdash;
         as well as followers on Facebook, Instagram and TikTok. On the other side,
-        anyone with a phone can earn Taka by completing those tasks and cashing
+        anyone with a phone can earn dollars by completing those tasks and cashing
         out through bKash or Nagad.
       </p>
 

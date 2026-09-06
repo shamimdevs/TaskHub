@@ -5,7 +5,8 @@ export interface CreateDepositBody {
   method: PaymentMethod;
   senderNumber: string;
   trxId: string;
-  amount: number;
+  /** What the buyer sent over bKash/Nagad, in taka. */
+  amountBdt: number;
 }
 
 export const depositsApi = baseApi.injectEndpoints({

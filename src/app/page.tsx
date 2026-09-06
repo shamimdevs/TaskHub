@@ -16,11 +16,12 @@ import {
   Wallet,
   PlaySquare,
 } from "lucide-react";
-import { APP_NAME, FEES, LIMITS, PRICING } from "@/lib/constants";
+import { APP_NAME, FEES, LIMITS, RATE_CARD, RATE_RANGE } from "@/lib/constants";
 import { formatMoney } from "@/lib/utils";
 import { t } from "@/lib/i18n/en";
 import { listJobs } from "@/lib/jobs";
 import { JobCard } from "@/components/marketing/JobCard";
+import { MarketingBottomNav } from "@/components/marketing/MarketingBottomNav";
 
 const SERVICES = [
   { icon: PlaySquare, label: "YouTube subscribers" },
@@ -31,8 +32,12 @@ const SERVICES = [
   { icon: Users, label: "FB / IG / TikTok follows" },
 ];
 
-export default function LandingPage() {
-  const jobs = listJobs().slice(0, 6);
+// Open jobs come from the database, so render at request time rather than
+// prerendering at build (which would need a live DB and go stale).
+export const dynamic = "force-dynamic";
+
+export default async function LandingPage() {
+  const jobs = (await listJobs()).slice(0, 6);
 
   return (
     <div className="bg-bg">
@@ -108,8 +113,8 @@ export default function LandingPage() {
         <div className="mx-auto max-w-6xl px-4 pb-16 sm:px-6">
           <div className="mx-auto grid max-w-3xl gap-4 sm:grid-cols-3">
             {[
-              { icon: Wallet, label: "Worker earns", value: formatMoney(PRICING.workerRewardPerAction), sub: "per action" },
-              { icon: Megaphone, label: "Buyer pays", value: formatMoney(PRICING.clientRatePerAction), sub: "per action" },
+              { icon: Wallet, label: "Worker earns", value: `${formatMoney(RATE_RANGE.min)}–${formatMoney(RATE_RANGE.max)}`, sub: "per action, by platform" },
+              { icon: Megaphone, label: "Buyer pays", value: "The same", sub: "no platform markup" },
               { icon: ShieldCheck, label: "Min. withdrawal", value: formatMoney(LIMITS.minWithdraw), sub: `${FEES.withdrawFeePct}% fee` },
             ].map((c) => (
               <div key={c.label} className="rounded-2xl border border-border bg-card p-4 shadow-card">
@@ -222,12 +227,14 @@ export default function LandingPage() {
             Simple, transparent pricing
           </h2>
           <p className="mx-auto mt-2 max-w-md text-center text-sm text-fg-muted">
-            No subscriptions. Buyers pay per action, workers earn per action.
+            No subscriptions. Every platform and action has its own rate — the
+            buyer pays it and the worker earns it. Every balance, price and
+            payout on TaskHub is in US dollars.
           </p>
           <div className="mt-10 grid gap-5 md:grid-cols-2">
             <PriceCard
               title="Workers"
-              price={`${formatMoney(PRICING.workerRewardPerAction)} / task`}
+              price={`from ${formatMoney(RATE_RANGE.min)} / task`}
               cta="Start earning"
               points={[
                 "Free to join, no deposit",
@@ -238,7 +245,7 @@ export default function LandingPage() {
             />
             <PriceCard
               title="Buyers"
-              price={`${formatMoney(PRICING.clientRatePer1k)} / 1,000`}
+              price={`${formatMoney((RATE_CARD.youtube.subscribe ?? 0) * 1000)} / 1,000 subs`}
               highlight
               cta="Grow my channel"
               points={[
@@ -294,7 +301,7 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-border">
+      <footer className="border-t border-border pb-20 md:pb-0">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-8 text-sm text-fg-muted sm:flex-row sm:px-6">
           <p className="flex items-center gap-1.5">
             <Smartphone size={14} /> {t.marketing.footerNote}
@@ -315,6 +322,8 @@ export default function LandingPage() {
           </div>
         </div>
       </footer>
+
+      <MarketingBottomNav />
     </div>
   );
 }
@@ -491,7 +500,7 @@ function PriceCard({
 const FAQS = [
   {
     q: "Is this real? How do I get paid?",
-    a: "Yes. Workers earn Taka for each verified task and withdraw to bKash or Nagad once they reach the minimum balance.",
+    a: "Yes. Workers earn dollars for each verified task and withdraw once they reach the minimum balance.",
   },
   {
     q: "Do the subscribers and watch time count for monetization?",

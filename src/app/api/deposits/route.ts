@@ -1,41 +1,32 @@
-import { db, json, me, roleFromRequest, tick } from "@/app/api/_data/db";
-import type { Deposit } from "@/types";
+import { prisma } from "@/lib/prisma";
+import { requireApiRole, isResponse, json, apiError, parseBody } from "@/lib/api";
+import { createDepositSchema } from "@/lib/validation";
+import { createDeposit } from "@/lib/domain/payments";
+import { DomainError } from "@/lib/domain/errors";
 
 export async function GET(req: Request) {
-  await tick();
-  const role = roleFromRequest(req);
-  const { searchParams } = new URL(req.url);
-  const scope = searchParams.get("scope");
-  let items = db.deposits;
-  if (role === "buyer" && scope !== "all") {
-    items = items.filter(
-      (d) => d.buyerId === me("buyer").id || d.buyerName === "Sadia Akter",
-    );
-  }
-  return json(
-    [...items].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
-  );
+  const auth = await requireApiRole(req, ["buyer", "admin"]);
+  if (isResponse(auth)) return auth;
+
+  const scope = new URL(req.url).searchParams.get("scope");
+  const where = auth.role === "admin" && scope !== "mine" ? {} : { buyerId: auth.id };
+
+  const deposits = await prisma.deposit.findMany({ where, orderBy: { createdAt: "desc" } });
+  return json(deposits);
 }
 
 export async function POST(req: Request) {
-  await tick();
-  const body = (await req.json()) as {
-    method: Deposit["method"];
-    senderNumber: string;
-    trxId: string;
-    amount: number;
-  };
-  const row: Deposit = {
-    id: `d_${Date.now()}`,
-    buyerId: me("buyer").id,
-    buyerName: "Sadia Akter",
-    method: body.method,
-    senderNumber: body.senderNumber,
-    trxId: body.trxId,
-    amount: Number(body.amount) || 0,
-    status: "pending",
-    createdAt: new Date().toISOString(),
-  };
-  db.deposits.unshift(row);
-  return json(row, { status: 201 });
+  const auth = await requireApiRole(req, "buyer");
+  if (isResponse(auth)) return auth;
+
+  const body = await parseBody(req, createDepositSchema);
+  if (isResponse(body)) return body;
+
+  try {
+    const deposit = await createDeposit({ id: auth.id, name: auth.name }, body);
+    return json(deposit, { status: 201 });
+  } catch (e) {
+    if (e instanceof DomainError) return apiError(e.status, e.message);
+    throw e;
+  }
 }

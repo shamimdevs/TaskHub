@@ -1,20 +1,32 @@
-import { db, json, me, roleFromRequest, tick } from "@/app/api/_data/db";
+import { prisma } from "@/lib/prisma";
+import { requireApiUser, isResponse, json, apiError } from "@/lib/api";
+import { releaseDueRewards } from "@/lib/domain/submissions";
 
 export async function GET(req: Request) {
-  await tick();
-  const role = roleFromRequest(req);
-  const user = me(role);
-  const transactions = db.wallets[role] ?? [];
-  return json({
-    user: {
-      id: user.id,
-      name: user.name,
-      role: user.role,
-      balance: user.balance,
-      pendingBalance: user.pendingBalance,
-      lifetimeEarned: user.lifetimeEarned,
-      lifetimeSpent: user.lifetimeSpent,
+  const auth = await requireApiUser(req);
+  if (isResponse(auth)) return auth;
+
+  await releaseDueRewards();
+
+  const user = await prisma.user.findUnique({
+    where: { id: auth.id },
+    select: {
+      id: true,
+      name: true,
+      role: true,
+      balance: true,
+      pendingBalance: true,
+      lifetimeEarned: true,
+      lifetimeSpent: true,
     },
-    transactions,
   });
+  if (!user) return apiError(404, "User not found");
+
+  const transactions = await prisma.walletTransaction.findMany({
+    where: { userId: auth.id },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+
+  return json({ user, transactions });
 }

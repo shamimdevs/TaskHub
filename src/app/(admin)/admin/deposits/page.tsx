@@ -15,7 +15,7 @@ import {
   useReviewDepositMutation,
 } from "@/redux/features/deposits/depositsApi";
 import { PAYMENT_METHODS } from "@/lib/constants";
-import { formatMoney, formatDateTime } from "@/lib/utils";
+import { formatBdt, formatMoney, formatDateTime } from "@/lib/utils";
 
 type Filter = "pending" | "approved" | "rejected" | "all";
 
@@ -82,7 +82,10 @@ export default function AdminDepositsPage() {
                     </div>
                     <div className="text-right">
                       <p className="text-base font-bold text-fg">
-                        {formatMoney(d.amount)}
+                        {formatBdt(d.amountBdt)}
+                      </p>
+                      <p className="text-[11px] text-fg-muted">
+                        credits {formatMoney(d.amount)} @ ৳{d.usdRate}
                       </p>
                       <PaymentStatusBadge status={d.status} />
                     </div>

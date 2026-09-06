@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft, Sparkles } from "lucide-react";
 import { APP_NAME } from "@/lib/constants";
+import { MarketingBottomNav } from "./MarketingBottomNav";
 
 /**
  * Shared chrome for the standalone marketing pages (About, Contact, Terms):
@@ -41,7 +42,7 @@ export function MarketingShell({
         {children}
       </main>
 
-      <footer className="border-t border-border">
+      <footer className="border-t border-border pb-20 md:pb-0">
         <div
           className={`mx-auto flex flex-col items-center justify-between gap-2 px-4 py-8 text-sm text-fg-muted sm:flex-row sm:px-6 ${max}`}
         >
@@ -64,6 +65,8 @@ export function MarketingShell({
           </nav>
         </div>
       </footer>
+
+      <MarketingBottomNav />
     </div>
   );
 }

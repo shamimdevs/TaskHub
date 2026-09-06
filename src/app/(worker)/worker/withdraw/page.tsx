@@ -16,14 +16,16 @@ import {
   useCreateWithdrawalMutation,
   useGetWithdrawalsQuery,
 } from "@/redux/features/withdrawals/withdrawalsApi";
-import { FEES, LIMITS, PAYMENT_METHODS } from "@/lib/constants";
+import { useGetSettingsQuery } from "@/redux/features/settings/settingsApi";
+import { FEES, LIMITS, PAYMENT_METHODS, USD_RATE } from "@/lib/constants";
 import { fill, t } from "@/lib/i18n/en";
-import { formatMoney, formatDate } from "@/lib/utils";
+import { formatBdt, formatMoney, formatDate, toBdt } from "@/lib/utils";
 import type { PaymentMethod } from "@/types";
 
 export default function WithdrawPage() {
   const wallet = useGetWalletQuery();
   const history = useGetWithdrawalsQuery();
+  const { data: settings } = useGetSettingsQuery();
   const [create, { isLoading }] = useCreateWithdrawalMutation();
   const toast = useToast();
 
@@ -32,11 +34,16 @@ export default function WithdrawPage() {
   const [amount, setAmount] = useState("");
   const [ok, setOk] = useState(false);
 
+  // Balance and request are dollars; the payout is sent in taka.
+  const feePct = settings?.withdrawFeePct ?? FEES.withdrawFeePct;
+  const minWithdraw = settings?.minWithdraw ?? LIMITS.minWithdraw;
+  const usdRate = settings?.usdRate ?? USD_RATE;
+
   const balance = wallet.data?.user.balance ?? 0;
   const amt = Number(amount) || 0;
-  const fee = +((amt * FEES.withdrawFeePct) / 100).toFixed(2);
+  const fee = +((amt * feePct) / 100).toFixed(2);
   const net = +(amt - fee).toFixed(2);
-  const tooLow = amt > 0 && amt < LIMITS.minWithdraw;
+  const tooLow = amt > 0 && amt < minWithdraw;
   const tooHigh = amt > balance;
 
   const submit = async () => {
@@ -64,7 +71,7 @@ export default function WithdrawPage() {
           <CardHeader
             title="Request withdrawal"
             description={fill(t.worker.minWithdrawNote, {
-              min: formatMoney(LIMITS.minWithdraw),
+              min: formatMoney(minWithdraw),
             })}
           />
           <CardBody className="space-y-4">
@@ -103,7 +110,7 @@ export default function WithdrawPage() {
               required
               error={
                 tooLow
-                  ? `Minimum is ${formatMoney(LIMITS.minWithdraw)}`
+                  ? `Minimum is ${formatMoney(minWithdraw)}`
                   : tooHigh
                     ? "More than your available balance"
                     : undefined
@@ -112,7 +119,7 @@ export default function WithdrawPage() {
               <Input
                 inputMode="decimal"
                 placeholder="0"
-                suffix="৳"
+                suffix="$"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 invalid={tooLow || tooHigh}
@@ -122,7 +129,7 @@ export default function WithdrawPage() {
             <div className="rounded-lg bg-bg-subtle p-3 text-sm">
               <Row label={t.worker.amount} value={formatMoney(amt)} />
               <Row
-                label={fill(t.worker.feeLine, { pct: FEES.withdrawFeePct })}
+                label={fill(t.worker.feeLine, { pct: feePct })}
                 value={`− ${formatMoney(fee)}`}
               />
               <div className="my-2 border-t border-border" />
@@ -130,6 +137,10 @@ export default function WithdrawPage() {
                 label={t.worker.youReceive}
                 value={formatMoney(Math.max(0, net))}
                 strong
+              />
+              <Row
+                label={`Sent to ${PAYMENT_METHODS[method].label} at ৳${usdRate} / $1`}
+                value={formatBdt(toBdt(Math.max(0, net), usdRate))}
               />
             </div>
 
@@ -159,7 +170,8 @@ export default function WithdrawPage() {
                         <p className="text-sm font-medium text-fg">
                           {formatMoney(w.net)}{" "}
                           <span className="text-xs font-normal text-fg-muted">
-                            via {PAYMENT_METHODS[w.method].label}
+                            ({formatBdt(w.payoutBdt)}) via{" "}
+                            {PAYMENT_METHODS[w.method].label}
                           </span>
                         </p>
                         <p className="text-[11px] text-fg-subtle">

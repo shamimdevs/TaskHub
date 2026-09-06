@@ -7,7 +7,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { PaymentStatusBadge } from "@/components/ui/StatusBadge";
 import { useGetDepositsQuery } from "@/redux/features/deposits/depositsApi";
 import { PAYMENT_METHODS } from "@/lib/constants";
-import { formatMoney, formatDateTime } from "@/lib/utils";
+import { formatBdt, formatMoney, formatDateTime } from "@/lib/utils";
 
 export default function BuyerDepositPage() {
   const history = useGetDepositsQuery();
@@ -29,7 +29,8 @@ export default function BuyerDepositPage() {
                       <p className="text-sm font-medium text-fg">
                         {formatMoney(d.amount)}{" "}
                         <span className="text-xs font-normal text-fg-muted">
-                          via {PAYMENT_METHODS[d.method].label} · {d.trxId}
+                          from {formatBdt(d.amountBdt)} via{" "}
+                          {PAYMENT_METHODS[d.method].label} · {d.trxId}
                         </span>
                       </p>
                       <p className="text-[11px] text-fg-subtle">

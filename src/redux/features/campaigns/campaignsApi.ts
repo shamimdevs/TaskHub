@@ -8,6 +8,8 @@ export interface CreateCampaignBody {
   targetUrl: string;
   quantity: number;
   note?: string;
+  /** Connected Facebook page to verify against (facebook + follow only). */
+  pageId?: string;
 }
 
 export const campaignsApi = baseApi.injectEndpoints({

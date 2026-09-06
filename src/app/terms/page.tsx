@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { MarketingShell } from "@/components/marketing/MarketingShell";
-import { APP_NAME, FEES, LIMITS, PAYMENT_METHODS, PRICING } from "@/lib/constants";
+import { APP_NAME, FEES, LIMITS, PAYMENT_METHODS, RATE_RANGE } from "@/lib/constants";
 import { formatMoney } from "@/lib/utils";
 import { t } from "@/lib/i18n/en";
 
@@ -128,8 +128,9 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
             edited, reused or misleading proof will be rejected.
           </li>
           <li>
-            Approved rewards are credited at{" "}
-            {formatMoney(PRICING.workerRewardPerAction)} per verified action and
+            Approved rewards are credited at the published rate for that
+            platform and action ({formatMoney(RATE_RANGE.min)}&ndash;
+            {formatMoney(RATE_RANGE.max)} per action) and
             are held for {holdMin}&ndash;{holdMax} days
             (typically {LIMITS.holdDaysDefault}) so the action can be verified as
             genuine and lasting.
@@ -168,11 +169,11 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
             target platform (YouTube, Meta, TikTok, X and others).
           </li>
           <li>
-            Campaigns run against your wallet balance. You pay{" "}
-            {formatMoney(PRICING.clientRatePerAction)} per action (
-            {formatMoney(PRICING.clientRatePer1k)} per 1,000). Rates, minimum and
-            maximum quantities and features may change; the price shown at
-            checkout is what applies to that campaign.
+            Campaigns run against your wallet balance. You pay the rate
+            published for the platform and action you choose (currently{" "}
+            {formatMoney(RATE_RANGE.min)}&ndash;{formatMoney(RATE_RANGE.max)} per
+            action). Rates, minimum and maximum quantities and features may
+            change; the price shown at checkout is what applies to that campaign.
           </li>
           <li>
             Campaign quantity must be between{" "}
@@ -231,6 +232,13 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
         <li>
           A withdrawal fee of {FEES.withdrawFeePct}% is deducted from each
           request. The amount you receive is shown before you confirm.
+        </li>
+        <li>
+          Balances, rewards and campaign costs are held in US dollars. Money you
+          send or receive over bKash, Nagad or Rocket is converted at the
+          exchange rate published in the app, which we may change at any time.
+          The rate is locked into each deposit and withdrawal when you submit
+          it, so a later change never re-prices a request already in the queue.
         </li>
         <li>
           Withdrawal requests are processed manually and may take a few business

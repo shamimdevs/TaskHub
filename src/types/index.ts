@@ -19,7 +19,9 @@ export type TaskType =
   | "subscribe"
   | "comment"
   | "share"
-  | "join_group";
+  | "join_group"
+  | "view"
+  | "watch_time";
 
 export type CampaignStatus =
   | "draft"
@@ -89,6 +91,9 @@ export interface Campaign {
   status: CampaignStatus;
   holdDays: number;
   note?: string;
+  /** Set when the campaign is checked automatically against a connected page. */
+  pageId?: string | null;
+  baselineFollowers?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -127,6 +132,8 @@ export interface Submission {
   holdUntil: string;
   reviewedAt?: string;
   reviewerNote?: string;
+  /** Cleared by the follower-count checker rather than a person. */
+  autoVerified?: boolean;
 }
 
 export interface WalletTransaction {
@@ -149,6 +156,11 @@ export interface Deposit {
   method: PaymentMethod;
   senderNumber: string;
   trxId: string;
+  /** What the buyer sent over bKash/Nagad, in BDT. */
+  amountBdt: number;
+  /** BDT per 1 USD, locked when the deposit was submitted. */
+  usdRate: number;
+  /** What lands in the wallet, in USD. */
   amount: number;
   status: PaymentStatus;
   note?: string;
@@ -162,9 +174,14 @@ export interface Withdrawal {
   workerName: string;
   method: PaymentMethod;
   accountNumber: string;
+  /** Requested, fee and net are USD — the wallet currency. */
   amount: number;
   fee: number;
   net: number;
+  /** BDT per 1 USD, locked when the request was made. */
+  usdRate: number;
+  /** What the admin sends to the bKash/Nagad number, in BDT. */
+  payoutBdt: number;
   status: PaymentStatus;
   note?: string;
   createdAt: string;
@@ -191,9 +208,12 @@ export interface Referral {
 }
 
 export interface AdminKpis {
-  grossRevenue: number;
-  netProfit: number;
-  marginPct: number;
+  /** Withdrawal commission collected — the platform's only income. */
+  commissionEarned: number;
+  /** Commission rate currently charged on a withdrawal, in percent. */
+  withdrawFeePct: number;
+  /** Buyer money that flowed through the platform, passed on to workers. */
+  platformVolume: number;
   payoutsPaid: number;
   totalUsers: number;
   activeWorkers: number;
@@ -202,18 +222,36 @@ export interface AdminKpis {
   pendingWithdrawals: number;
   submissionsOnHold: number;
   campaignsAwaitingReview: number;
-  revenueSeries: { label: string; revenue: number; payout: number }[];
+  commissionSeries: { label: string; commission: number; payout: number }[];
+}
+
+/** One editable price per platform + action, in USD. */
+export interface RateCardEntry {
+  platform: Platform;
+  type: TaskType;
+  rate: number;
+  enabled: boolean;
 }
 
 export interface PlatformSettings {
-  clientRatePer1k: number;
-  workerRewardPerAction: number;
+  /** BDT per 1 USD. The admin can change this at any time. */
+  usdRate: number;
+  minDeposit: number;
   minWithdraw: number;
   withdrawFeePct: number;
   holdDays: number;
   referralBonus: number;
   autoApproveDeposits: boolean;
+  /** Hands-off Facebook follow campaigns: no review, count-checked payouts. */
+  autoVerify: boolean;
+  /** Minutes a submission waits for the follower count to move. */
+  autoVerifyGraceMins: number;
   maintenanceMode: boolean;
+}
+
+/** What `GET /api/settings` returns: the singleton plus the rate card. */
+export interface SettingsPayload extends PlatformSettings {
+  rates: RateCardEntry[];
 }
 
 export interface Paginated<T> {

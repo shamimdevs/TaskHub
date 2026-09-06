@@ -1,44 +1,32 @@
-import { db, json, me, roleFromRequest, tick } from "@/app/api/_data/db";
-import { FEES } from "@/lib/constants";
-import type { Withdrawal } from "@/types";
+import { prisma } from "@/lib/prisma";
+import { requireApiRole, isResponse, json, apiError, parseBody } from "@/lib/api";
+import { createWithdrawalSchema } from "@/lib/validation";
+import { createWithdrawal } from "@/lib/domain/payments";
+import { DomainError } from "@/lib/domain/errors";
 
 export async function GET(req: Request) {
-  await tick();
-  const role = roleFromRequest(req);
-  const { searchParams } = new URL(req.url);
-  const scope = searchParams.get("scope");
-  let items = db.withdrawals;
-  if (role === "worker" && scope !== "all") {
-    items = items.filter(
-      (w) => w.workerId === me("worker").id || w.workerName === "Rakib Hasan",
-    );
-  }
-  return json(
-    [...items].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
-  );
+  const auth = await requireApiRole(req, ["worker", "admin"]);
+  if (isResponse(auth)) return auth;
+
+  const scope = new URL(req.url).searchParams.get("scope");
+  const where = auth.role === "admin" && scope !== "mine" ? {} : { workerId: auth.id };
+
+  const withdrawals = await prisma.withdrawal.findMany({ where, orderBy: { createdAt: "desc" } });
+  return json(withdrawals);
 }
 
 export async function POST(req: Request) {
-  await tick();
-  const body = (await req.json()) as {
-    method: Withdrawal["method"];
-    accountNumber: string;
-    amount: number;
-  };
-  const amount = Number(body.amount) || 0;
-  const fee = +((amount * FEES.withdrawFeePct) / 100).toFixed(2);
-  const row: Withdrawal = {
-    id: `x_${Date.now()}`,
-    workerId: me("worker").id,
-    workerName: "Rakib Hasan",
-    method: body.method,
-    accountNumber: body.accountNumber,
-    amount,
-    fee,
-    net: +(amount - fee).toFixed(2),
-    status: "pending",
-    createdAt: new Date().toISOString(),
-  };
-  db.withdrawals.unshift(row);
-  return json(row, { status: 201 });
+  const auth = await requireApiRole(req, "worker");
+  if (isResponse(auth)) return auth;
+
+  const body = await parseBody(req, createWithdrawalSchema);
+  if (isResponse(body)) return body;
+
+  try {
+    const withdrawal = await createWithdrawal({ id: auth.id, name: auth.name }, body);
+    return json(withdrawal, { status: 201 });
+  } catch (e) {
+    if (e instanceof DomainError) return apiError(e.status, e.message);
+    throw e;
+  }
 }

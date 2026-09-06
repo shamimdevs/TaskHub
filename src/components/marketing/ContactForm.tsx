@@ -26,13 +26,16 @@ export function ContactForm() {
   });
   const [errors, setErrors] = useState<Errors>({});
   const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
 
   function set(key: keyof typeof form, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setFailed(null);
     const next: Errors = {};
     if (!form.name.trim()) next.name = "Please enter your name.";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
@@ -42,12 +45,29 @@ export function ContactForm() {
     setErrors(next);
     if (Object.keys(next).length > 0) return;
 
-    const subject = `[${form.topic}] Message from ${form.name}`;
-    const body = `${form.message}\n\n— ${form.name} (${form.email})`;
-    window.location.href = `mailto:${SUPPORT.email}?subject=${encodeURIComponent(
-      subject,
-    )}&body=${encodeURIComponent(body)}`;
-    setSent(true);
+    setSending(true);
+    try {
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name.trim(),
+          email: form.email.trim(),
+          subject: form.topic,
+          message: form.message.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        setFailed(data?.error ?? "Something went wrong. Please try again.");
+        return;
+      }
+      setSent(true);
+    } catch {
+      setFailed("Network error. Please try again.");
+    } finally {
+      setSending(false);
+    }
   }
 
   if (sent) {
@@ -56,12 +76,10 @@ export function ContactForm() {
         <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-brand-50 text-brand-600 ring-1 ring-inset ring-brand-500/15">
           <CheckCircle2 size={22} />
         </span>
-        <p className="mt-3 text-sm font-semibold text-fg">
-          Your email is ready to send
-        </p>
+        <p className="mt-3 text-sm font-semibold text-fg">Message sent</p>
         <p className="mx-auto mt-1 max-w-sm text-sm text-fg-muted">
-          We opened your email app with the message pre-filled. If nothing
-          happened, write to us directly at{" "}
+          Thanks for reaching out — we usually reply {SUPPORT.responseTime}. You
+          can also email us at{" "}
           <a
             href={`mailto:${SUPPORT.email}`}
             className="font-medium text-brand underline underline-offset-2"
@@ -142,11 +160,17 @@ export function ContactForm() {
         />
       </Field>
 
-      <Button type="submit" icon={Send} fullWidth>
+      {failed && (
+        <p className="rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-xs font-medium text-danger">
+          {failed}
+        </p>
+      )}
+
+      <Button type="submit" icon={Send} fullWidth loading={sending}>
         Send message
       </Button>
       <p className="text-center text-xs text-fg-subtle">
-        This opens your email app. We usually reply {SUPPORT.responseTime}.
+        We usually reply {SUPPORT.responseTime}.
       </p>
     </form>
   );

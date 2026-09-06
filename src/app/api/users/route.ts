@@ -1,21 +1,34 @@
-import { db, json, tick } from "@/app/api/_data/db";
+import type { Prisma, Role } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { requireApiRole, isResponse, json, pageParams } from "@/lib/api";
+import { toUser } from "@/lib/dto";
+
+const ROLES: Role[] = ["worker", "buyer", "admin"];
 
 export async function GET(req: Request) {
-  await tick();
-  const { searchParams } = new URL(req.url);
-  const q = searchParams.get("q")?.toLowerCase().trim();
-  const role = searchParams.get("role");
-  let items = db.users;
-  if (role && role !== "all") items = items.filter((u) => u.role === role);
+  const auth = await requireApiRole(req, "admin");
+  if (isResponse(auth)) return auth;
+
+  const sp = new URL(req.url).searchParams;
+  const q = sp.get("q")?.trim();
+  const roleParam = sp.get("role");
+  const { skip, take } = pageParams(req, 50);
+
+  const where: Prisma.UserWhereInput = {};
+  if (roleParam && ROLES.includes(roleParam as Role)) where.role = roleParam as Role;
   if (q) {
-    items = items.filter(
-      (u) =>
-        u.name.toLowerCase().includes(q) ||
-        u.email.toLowerCase().includes(q) ||
-        u.phone.includes(q),
-    );
+    where.OR = [
+      { name: { contains: q, mode: "insensitive" } },
+      { email: { contains: q, mode: "insensitive" } },
+      { phone: { contains: q } },
+    ];
   }
-  return json(
-    [...items].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
-  );
+
+  const users = await prisma.user.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    skip,
+    take,
+  });
+  return json(users.map(toUser));
 }

@@ -1,27 +1,25 @@
-import { db, json, me, roleFromRequest, tick } from "@/app/api/_data/db";
-import { notifications as seed } from "@/lib/mock";
+import { prisma } from "@/lib/prisma";
+import { requireApiUser, isResponse, json } from "@/lib/api";
 
 export async function GET(req: Request) {
-  await tick();
-  const role = roleFromRequest(req);
-  const uid = me(role).id;
-  // seed per-role notifications lazily
-  if (!db.notifications.some((n) => n.userId === uid)) {
-    db.notifications.push(...seed(uid));
-  }
-  return json(
-    db.notifications
-      .filter((n) => n.userId === uid)
-      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
-  );
+  const auth = await requireApiUser(req);
+  if (isResponse(auth)) return auth;
+
+  const notifications = await prisma.notification.findMany({
+    where: { userId: auth.id },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  return json(notifications);
 }
 
 export async function PATCH(req: Request) {
-  await tick();
-  const role = roleFromRequest(req);
-  const uid = me(role).id;
-  db.notifications.forEach((n) => {
-    if (n.userId === uid) n.read = true;
+  const auth = await requireApiUser(req);
+  if (isResponse(auth)) return auth;
+
+  await prisma.notification.updateMany({
+    where: { userId: auth.id, read: false },
+    data: { read: true },
   });
-  return json({ ok: true });
+  return json({ ok: true } as const);
 }
