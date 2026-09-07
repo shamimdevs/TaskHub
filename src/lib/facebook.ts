@@ -23,7 +23,15 @@ const APP_SECRET = process.env.FACEBOOK_APP_SECRET ?? "";
 export type FacebookMode = "page" | "profile";
 
 const SCOPES: Record<FacebookMode, string[]> = {
-  page: ["pages_show_list", "pages_read_engagement"],
+  // instagram_basic is what turns a connected page into an Instagram target:
+  // it is the only route to the follower count of the business account behind
+  // the page, and Instagram offers nothing else to verify a follow against.
+  page: [
+    "pages_show_list",
+    "pages_read_engagement",
+    "instagram_basic",
+    "instagram_manage_insights",
+  ],
   // user_link returns a usable profile URL; without App Review it is granted
   // only to app admins, so the profile link may come back empty.
   profile: ["public_profile", "user_link"],
@@ -110,6 +118,13 @@ export interface ManagedPage {
   username?: string;
   accessToken: string;
   followers: number;
+  instagram?: InstagramBusinessAccount;
+}
+
+export interface InstagramBusinessAccount {
+  id: string;
+  username?: string;
+  followers: number;
 }
 
 /** Pages the signed-in person administers, each with its own page token. */
@@ -122,10 +137,17 @@ export async function listManagedPages(userToken: string): Promise<ManagedPage[]
       access_token: string;
       followers_count?: number;
       fan_count?: number;
+      instagram_business_account?: {
+        id: string;
+        username?: string;
+        followers_count?: number;
+      };
     }[];
   }>("/me/accounts", {
     access_token: userToken,
-    fields: "id,name,username,access_token,followers_count,fan_count",
+    fields:
+      "id,name,username,access_token,followers_count,fan_count," +
+      "instagram_business_account{id,username,followers_count}",
     limit: "100",
   });
 
@@ -135,7 +157,40 @@ export async function listManagedPages(userToken: string): Promise<ManagedPage[]
     username: p.username,
     accessToken: p.access_token,
     followers: p.followers_count ?? p.fan_count ?? 0,
+    instagram: p.instagram_business_account
+      ? {
+          id: p.instagram_business_account.id,
+          username: p.instagram_business_account.username,
+          followers: p.instagram_business_account.followers_count ?? 0,
+        }
+      : undefined,
   }));
+}
+
+/**
+ * Follower count for the Instagram business account behind a page.
+ *
+ * This is the whole Instagram verification story. There is no endpoint, on any
+ * token, that says whether one person follows another — so an Instagram
+ * campaign is settled against this number moving, exactly the way a page's is.
+ */
+export async function getInstagramFollowerCount(
+  instagramId: string,
+  pageToken: string,
+): Promise<number> {
+  const data = await graph<{ followers_count?: number }>(`/${instagramId}`, {
+    access_token: pageToken,
+    fields: "followers_count",
+  });
+  if (typeof data.followers_count !== "number") {
+    throw new FacebookError("Instagram account did not report a follower count");
+  }
+  return data.followers_count;
+}
+
+/** The public URL workers are sent to for an Instagram target. */
+export function instagramUrl(username: string): string {
+  return `https://www.instagram.com/${username}`;
 }
 
 /**

@@ -114,6 +114,22 @@ enum ReferralStatus {
   qualified
 }
 
+/// How a worker's social account came to be attached to their TaskHub account.
+///
+/// `oauth`   the platform itself confirmed it, and we may hold a token we can
+///           re-check with. The strongest, and the only one that can answer
+///           "did this worker subscribe?".
+/// `code`    the worker put a one-time code on their public profile and we
+///           read it back. Proves control of the account without any app
+///           credentials, but buys no token — identity only.
+/// `claimed` the worker typed their handle and nothing has proved it. Only the
+///           one-handle-one-worker rule stands behind it.
+enum LinkMethod {
+  oauth
+  code
+  claimed
+}
+
 // --------------------------------------------------------------------------
 // Better Auth core (User is extended with TaskHub fields)
 // --------------------------------------------------------------------------
@@ -235,10 +251,15 @@ model Campaign {
   holdDays          Int
   note              String?
   /// Set when the campaign is verified automatically: the connected page it
-  /// targets, and the follower count captured the moment it went live.
+  /// targets, and the follower count captured the moment it went live. Used by
+  /// the count-delta checker (Facebook, Instagram).
   pageId            String?
   page              FacebookPage?  @relation(fields: [pageId], references: [id], onDelete: SetNull)
   baselineFollowers Int?
+  /// The target's own id on the platform — a YouTube channel id today. Where a
+  /// platform can be asked "does this person follow that account?", this is the
+  /// account asked about, and no buyer-side connection is needed at all.
+  targetRef         String?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 
@@ -448,19 +469,25 @@ model PlatformSettings {
 /// lets us read the follower count, which is the only signal Facebook gives:
 /// there is no API that lists *who* follows a page.
 model FacebookPage {
-  id            String    @id @default(cuid())
-  ownerId       String
-  owner         User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  pageId        String    @unique
-  name          String
-  username      String?
-  accessToken   String
+  id                 String    @id @default(cuid())
+  ownerId            String
+  owner              User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  pageId             String    @unique
+  name               String
+  username           String?
+  accessToken        String
   /// Last count we read, and when.
-  followers     Int       @default(0)
-  lastCheckedAt DateTime?
+  followers          Int       @default(0)
+  lastCheckedAt      DateTime?
   /// Last Graph error, cleared on the next good read.
-  lastError     String?
-  connectedAt   DateTime  @default(now())
+  lastError          String?
+  /// The Instagram Business account this page is linked to, if any. Instagram
+  /// has no "who follows" API either, so an Instagram campaign is settled
+  /// against this follower count exactly the way a page's is.
+  instagramId        String?   @unique
+  instagramUsername  String?
+  instagramFollowers Int?
+  connectedAt        DateTime  @default(now())
 
   campaigns Campaign[]
   samples   PageFollowerSample[]
@@ -474,10 +501,13 @@ model PageFollowerSample {
   id        String       @id @default(cuid())
   pageId    String
   page      FacebookPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  /// Which account the reading is of: the page itself, or the Instagram
+  /// business account behind it.
+  platform  Platform     @default(facebook)
   followers Int
   takenAt   DateTime     @default(now())
 
-  @@index([pageId, takenAt])
+  @@index([pageId, platform, takenAt])
 }
 
 /// A worker's own social account, linked through the platform's login. It is
@@ -485,17 +515,40 @@ model PageFollowerSample {
 /// connected account instead of being typed, and one social account can only
 /// ever belong to one TaskHub worker.
 model SocialAccount {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  provider    Platform
-  /// The provider's own id for this person (app-scoped on Facebook).
-  providerId  String
-  name        String
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     Platform
+  /// The provider's own id for this person: app-scoped on Facebook and
+  /// Instagram, the channel id on YouTube. A self-claimed handle is stored as
+  /// `claimed:<handle>` so it can never be mistaken for a real provider id
+  /// while still holding the one-account-one-worker rule.
+  providerId   String
+  name         String
+  /// @handle / username where the platform has one.
+  username     String?
   /// Public profile link. Facebook only returns this with the user_link
   /// permission, so it can start out empty and be filled in once.
-  profileUrl  String?
-  connectedAt DateTime @default(now())
+  profileUrl   String?
+  linkMethod   LinkMethod @default(oauth)
+  /// One-time code the worker is asked to put on their public profile, so a
+  /// claimed handle can prove itself without the platform app credentials.
+  /// Cleared once it has been read back.
+  verifyCode   String?
+  verifyCodeAt DateTime?
+
+  /// Held only for providers that can answer "does this person follow X?" —
+  /// YouTube today. Empty for the ones that can only be counted.
+  accessToken    String?
+  refreshToken   String?
+  tokenExpiresAt DateTime?
+  scope          String?
+  /// Last error from a direct check, cleared on the next good one. Set when
+  /// the worker revoked access — their submissions go to manual review rather
+  /// than being rejected for something that is not their doing.
+  lastError      String?
+  lastCheckedAt  DateTime?
+  connectedAt    DateTime  @default(now())
 
   @@unique([provider, providerId])
   @@unique([userId, provider])

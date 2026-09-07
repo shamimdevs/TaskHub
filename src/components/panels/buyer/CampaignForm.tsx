@@ -57,20 +57,46 @@ export function CampaignForm() {
   const balance = wallet?.user.balance ?? 0;
   const short = cost > balance;
 
-  // Facebook follows are the one combination that can run hands-off: the buyer
-  // connects the page, and the follower count clears every submission.
-  const canAutoVerify =
-    platform === "facebook" && effType === "follow" && (settings?.autoVerify ?? true);
+  const autoVerifyOn = settings?.autoVerify ?? true;
+
+  // Three combinations can run hands-off, and they do not work the same way.
+  //
+  // YouTube subscribes are the strong one: we ask each worker's own account
+  // whether they subscribed, so nothing has to be connected here at all — just
+  // paste the channel link.
+  //
+  // Facebook and Instagram follows can only be counted, so they need an account
+  // we hold a token for: a connected page, or the Instagram business account
+  // attached to one.
+  const directMode =
+    autoVerifyOn && platform === "youtube" && effType === "subscribe";
+
+  const needsPage =
+    autoVerifyOn &&
+    effType === "follow" &&
+    (platform === "facebook" || platform === "instagram");
+
   const pages = facebook?.pages ?? [];
-  const selectedPage = pages.find((pg) => pg.id === pageId);
-  const autoMode = canAutoVerify && Boolean(selectedPage);
+  // An Instagram campaign can only target a page that has an Instagram
+  // business account behind it — there is nothing else to measure.
+  const eligiblePages =
+    platform === "instagram" ? pages.filter((pg) => pg.instagram) : pages;
+  const selectedPage = eligiblePages.find((pg) => pg.id === pageId);
+  const countMode = needsPage && Boolean(selectedPage);
+
+  /** The link workers will actually be sent to under count verification. */
+  const countTargetUrl =
+    selectedPage &&
+    (platform === "instagram" ? selectedPage.instagram!.url : selectedPage.url);
+
+  const autoMode = directMode || countMode;
 
   const launch = async () => {
     if (!title.trim()) {
       toast.error("Add a campaign title");
       return;
     }
-    if (!autoMode && !url.trim()) {
+    if (!countMode && !url.trim()) {
       toast.error("Add a target link");
       return;
     }
@@ -83,13 +109,15 @@ export function CampaignForm() {
         platform,
         type: effType,
         title,
-        targetUrl: autoMode ? selectedPage!.url : url,
+        targetUrl: countMode ? countTargetUrl! : url,
         quantity: qty,
         note,
-        pageId: autoMode ? selectedPage!.id : undefined,
+        pageId: countMode ? selectedPage!.id : undefined,
       }).unwrap();
+      // A direct campaign only goes live if the channel actually resolved, so
+      // report what came back rather than what we hoped for.
       toast.success(
-        autoMode ? "Campaign is live" : "Campaign submitted for review",
+        c.status === "active" ? "Campaign is live" : "Campaign submitted for review",
       );
       router.push(`/buyer/campaigns/${c.id}`);
     } catch {
@@ -142,10 +170,14 @@ export function CampaignForm() {
               />
             </Field>
 
-            {canAutoVerify && (
+            {needsPage && (
               <Field
-                label="Facebook page"
-                hint="Connect the page and the campaign runs itself — no review, and every follow is checked against your follower count."
+                label={platform === "instagram" ? "Instagram account" : "Facebook page"}
+                hint={
+                  platform === "instagram"
+                    ? "Instagram will not say who followed you, so a campaign is measured against your follower count. Connect the Facebook page your Instagram business account is attached to."
+                    : "Connect the page and the campaign runs itself — no review, and every follow is checked against your follower count."
+                }
               >
                 {connectStatus === "connected" && (
                   <Alert tone="success">Facebook page connected.</Alert>
@@ -161,19 +193,33 @@ export function CampaignForm() {
                   </Alert>
                 )}
 
-                {pages.length > 0 && (
+                {eligiblePages.length > 0 && (
                   <Select
                     value={pageId}
                     onChange={(e) => setPageId(e.target.value)}
                   >
                     <option value="">Verify manually (paste a link)</option>
-                    {pages.map((pg) => (
+                    {eligiblePages.map((pg) => (
                       <option key={pg.id} value={pg.id}>
-                        {pg.name} · {formatNumber(pg.followers)} followers
+                        {platform === "instagram"
+                          ? `@${pg.instagram!.username ?? pg.name} · ${formatNumber(
+                              pg.instagram!.followers,
+                            )} followers`
+                          : `${pg.name} · ${formatNumber(pg.followers)} followers`}
                       </option>
                     ))}
                   </Select>
                 )}
+
+                {platform === "instagram" &&
+                  pages.length > 0 &&
+                  eligiblePages.length === 0 && (
+                    <Alert tone="warning">
+                      None of your connected pages has an Instagram business
+                      account attached. Switch the Instagram account to Business
+                      or Creator, link it to a Facebook page, then connect again.
+                    </Alert>
+                  )}
 
                 {facebook?.configured !== false && (
                   <a
@@ -192,22 +238,51 @@ export function CampaignForm() {
               </Field>
             )}
 
-            {autoMode ? (
+            {countMode && (
               <Alert tone="success">
                 <span className="flex items-start gap-2">
                   <Zap size={15} className="mt-0.5 shrink-0" />
                   <span>
                     Workers will be sent to{" "}
-                    <span className="font-semibold">{selectedPage!.url}</span>.
-                    The campaign goes live immediately and rewards clear on their
-                    own as your follower count moves.
+                    <span className="font-semibold">{countTargetUrl}</span>. The
+                    campaign goes live immediately and rewards clear on their own
+                    as your follower count moves.
                   </span>
                 </span>
               </Alert>
-            ) : (
-              <Field label={t.buyer.targetUrl} hint={t.buyer.targetUrlHint} required>
+            )}
+
+            {directMode && (
+              <Alert tone="success">
+                <span className="flex items-start gap-2">
+                  <Zap size={15} className="mt-0.5 shrink-0" />
+                  <span>
+                    Paste your channel link below and this campaign runs itself.
+                    YouTube is the one platform that will tell us whether a
+                    specific person subscribed, so every submission is checked
+                    against that worker&apos;s own subscriptions — no follower
+                    maths, and no waiting on a review.
+                  </span>
+                </span>
+              </Alert>
+            )}
+
+            {!countMode && (
+              <Field
+                label={t.buyer.targetUrl}
+                hint={
+                  directMode
+                    ? "Your channel link — youtube.com/@handle or /channel/UC…"
+                    : t.buyer.targetUrlHint
+                }
+                required
+              >
                 <Input
-                  placeholder={`https://${platform}.com/yourpage`}
+                  placeholder={
+                    directMode
+                      ? "https://www.youtube.com/@yourchannel"
+                      : `https://${platform}.com/yourpage`
+                  }
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                 />
@@ -273,7 +348,9 @@ export function CampaignForm() {
           {t.buyer.launch}
         </Button>
         <p className="text-center text-[11px] text-fg-subtle">
-          Campaigns are reviewed before going live to workers.
+          {autoMode
+            ? "This campaign goes live immediately and is checked automatically."
+            : "Campaigns are reviewed before going live to workers."}
         </p>
       </div>
     </div>

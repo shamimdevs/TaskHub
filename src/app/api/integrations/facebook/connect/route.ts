@@ -1,13 +1,10 @@
-import { randomBytes } from "node:crypto";
-import { NextResponse } from "next/server";
 import { requireApiUser, isResponse, apiError } from "@/lib/api";
+import { newState, startOAuth } from "@/lib/oauth-state";
 import {
   facebookConfigured,
   facebookLoginUrl,
   type FacebookMode,
 } from "@/lib/facebook";
-
-export const STATE_COOKIE = "fb_oauth_state";
 
 /**
  * Starts Facebook Login. `?as=page` is a buyer connecting a page to verify a
@@ -31,14 +28,6 @@ export async function GET(req: Request) {
     return apiError(403, "Workers link their own profile, not a page");
   }
 
-  const state = `${mode}.${randomBytes(24).toString("base64url")}`;
-  const res = NextResponse.redirect(facebookLoginUrl(state, mode));
-  res.cookies.set(STATE_COOKIE, state, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 600,
-  });
-  return res;
+  const state = newState(mode);
+  return startOAuth("facebook", facebookLoginUrl(state, mode), state);
 }

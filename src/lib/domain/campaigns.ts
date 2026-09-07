@@ -3,7 +3,13 @@ import { Prisma } from "@prisma/client";
 import type { CampaignStatus, Platform, TaskType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { LIMITS } from "@/lib/constants";
-import { getFollowerCount, pageUrl } from "@/lib/facebook";
+import {
+  getFollowerCount,
+  getInstagramFollowerCount,
+  instagramUrl,
+  pageUrl,
+} from "@/lib/facebook";
+import { channelUrl, resolveChannelId } from "@/lib/youtube";
 import { getSettings, getRate } from "./settings";
 import { postTransaction } from "./wallet";
 import { DomainError } from "./errors";
@@ -37,29 +43,93 @@ export interface CreateCampaignInput {
   quantity: number;
   note?: string;
   /**
-   * Connected Facebook page to verify against. Only meaningful for a
-   * facebook + follow campaign; with it the campaign runs hands-off.
+   * Connected page to verify against, for the platforms that can only be
+   * counted: a Facebook page, or the Instagram business account behind one.
+   * With it the campaign runs hands-off. YouTube needs nothing here — the
+   * channel is read straight out of `targetUrl`.
    */
   pageId?: string;
 }
 
 /**
- * Resolves the auto-verification target for a new campaign: the connected page
- * and the follower count it starts from. Returns null when the campaign is not
- * eligible, or when Facebook cannot be reached — in which case the campaign
- * simply falls back to the manual review queue rather than failing.
+ * What makes a campaign run without a human: where workers are sent, and how
+ * their submissions will be settled.
+ */
+interface AutoTarget {
+  /** Canonical link, so workers always land on the account being measured. */
+  targetUrl: string;
+  /** Count-checked platforms: the connected page and its starting count. */
+  pageId?: string;
+  baselineFollowers?: number;
+  /** Directly-checked platforms: the account we will ask about. */
+  targetRef?: string;
+}
+
+/**
+ * Resolves how a new campaign will be verified, or null when it cannot be —
+ * in which case it simply joins the manual review queue rather than failing
+ * the buyer's launch. A network hiccup at the wrong moment costs a review, not
+ * a campaign.
  */
 async function resolveAutoTarget(
   buyerId: string,
   input: CreateCampaignInput,
   autoVerify: boolean,
-) {
-  if (!autoVerify || !input.pageId) return null;
-  if (input.platform !== "facebook" || input.type !== "follow") return null;
+): Promise<AutoTarget | null> {
+  if (!autoVerify) return null;
+
+  // YouTube is the one platform that answers per worker, so it needs nothing
+  // connected: resolve the channel out of the link the buyer pasted and the
+  // subscription check does the rest.
+  if (input.platform === "youtube" && input.type === "subscribe") {
+    try {
+      const channel = await resolveChannelId(input.targetUrl);
+      if (!channel) return null;
+      return { targetUrl: channelUrl(channel), targetRef: channel.channelId };
+    } catch (e) {
+      console.error("[youtube] channel lookup failed:", (e as Error).message);
+      return null;
+    }
+  }
+
+  // Facebook and Instagram can only be counted, and a count needs an account
+  // we hold a token for.
+  if (!input.pageId || input.type !== "follow") return null;
+  if (input.platform !== "facebook" && input.platform !== "instagram") return null;
 
   const page = await prisma.facebookPage.findUnique({ where: { id: input.pageId } });
   if (!page || page.ownerId !== buyerId) {
-    throw new DomainError("That Facebook page is not connected to your account");
+    throw new DomainError("That page is not connected to your account");
+  }
+
+  if (input.platform === "instagram") {
+    if (!page.instagramId) {
+      throw new DomainError(
+        "That page has no Instagram business account attached to it",
+      );
+    }
+    try {
+      const baseline = await getInstagramFollowerCount(
+        page.instagramId,
+        page.accessToken,
+      );
+      await prisma.facebookPage.update({
+        where: { id: page.id },
+        data: {
+          instagramFollowers: baseline,
+          lastCheckedAt: new Date(),
+          lastError: null,
+        },
+      });
+      return {
+        targetUrl: instagramUrl(page.instagramUsername ?? page.instagramId),
+        pageId: page.id,
+        baselineFollowers: baseline,
+      };
+    } catch (e) {
+      console.error("[instagram] baseline read failed:", (e as Error).message);
+      return null;
+    }
   }
 
   try {
@@ -68,7 +138,7 @@ async function resolveAutoTarget(
       where: { id: page.id },
       data: { followers: baseline, lastCheckedAt: new Date(), lastError: null },
     });
-    return { page, baseline };
+    return { targetUrl: pageUrl(page), pageId: page.id, baselineFollowers: baseline };
   } catch (e) {
     console.error("[facebook] baseline read failed:", (e as Error).message);
     return null;
@@ -98,11 +168,12 @@ export async function createCampaign(
         platform: input.platform,
         type: input.type,
         title: input.title.trim() || "Untitled campaign",
-        // An auto-verified campaign points at the connected page itself, so
-        // the link workers open always belongs to the account being measured.
-        targetUrl: auto ? pageUrl(auto.page) : input.targetUrl.trim(),
-        pageId: auto?.page.id ?? null,
-        baselineFollowers: auto?.baseline ?? null,
+        // An auto-verified campaign points at the resolved account itself, so
+        // the link workers open always belongs to what is being measured.
+        targetUrl: auto ? auto.targetUrl : input.targetUrl.trim(),
+        pageId: auto?.pageId ?? null,
+        baselineFollowers: auto?.baselineFollowers ?? null,
+        targetRef: auto?.targetRef ?? null,
         quantity,
         ratePerAction: new Prisma.Decimal(rate),
         workerReward: new Prisma.Decimal(workerReward),
@@ -126,7 +197,7 @@ export async function createCampaign(
     return campaign;
   });
 
-  // Nothing to review: the follower count is the reviewer.
+  // Nothing to review: the platform itself is the reviewer.
   if (auto) return reviewCampaign(campaign.id, "active");
   return campaign;
 }

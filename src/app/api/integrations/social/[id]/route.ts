@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, isResponse, json, apiError, parseBody } from "@/lib/api";
 import { setProfileUrlSchema } from "@/lib/validation";
+import { publicAccount } from "@/lib/domain/social";
 
 async function owned(req: Request, id: string) {
   const auth = await requireApiUser(req);
@@ -30,9 +31,8 @@ export async function PATCH(
   const updated = await prisma.socialAccount.update({
     where: { id },
     data: { profileUrl: body.profileUrl },
-    select: { id: true, provider: true, name: true, profileUrl: true, connectedAt: true },
   });
-  return json(updated);
+  return json(publicAccount(updated));
 }
 
 /** Unlink. Past submissions keep the proof link they were sent with. */

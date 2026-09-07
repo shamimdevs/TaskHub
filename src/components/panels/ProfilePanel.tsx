@@ -2,7 +2,16 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { BadgeCheck, LogOut, Mail, Phone, ShieldAlert } from "lucide-react";
+import {
+  BadgeCheck,
+  ChevronRight,
+  Link2,
+  LogOut,
+  Mail,
+  Phone,
+  ShieldAlert,
+} from "lucide-react";
+import Link from "next/link";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Field } from "@/components/ui/Field";
@@ -10,7 +19,6 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Misc";
 import { Avatar } from "@/components/ui/Misc";
-import { ConnectedAccounts } from "@/components/panels/worker/ConnectedAccounts";
 import { useToast } from "@/components/ui/Toast";
 import { useGetMeQuery } from "@/redux/features/session/sessionApi";
 import { authClient } from "@/lib/auth-client";
@@ -198,7 +206,27 @@ export function ProfilePanel({ role }: { role: Role }) {
         </div>
 
         <div className="space-y-4">
-          {role === "worker" && <ConnectedAccounts />}
+          {role === "worker" && (
+            <Card>
+              <CardBody className="p-0">
+                <Link
+                  href="/worker/accounts"
+                  className="flex items-center gap-3 p-4 transition-colors hover:bg-bg-subtle"
+                >
+                  <Link2 size={18} className="shrink-0 text-fg-muted" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-fg">
+                      Connected accounts
+                    </span>
+                    <span className="block text-xs text-fg-muted">
+                      Link the accounts your task proofs are checked against
+                    </span>
+                  </span>
+                  <ChevronRight size={16} className="shrink-0 text-fg-subtle" />
+                </Link>
+              </CardBody>
+            </Card>
+          )}
 
           <Card>
             <CardBody>

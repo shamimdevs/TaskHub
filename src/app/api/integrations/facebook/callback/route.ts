@@ -1,7 +1,6 @@
-import { Prisma } from "@prisma/client";
-import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, isResponse } from "@/lib/api";
+import { finishOAuth, readState } from "@/lib/oauth-state";
 import {
   exchangeCode,
   getProfile,
@@ -9,21 +8,17 @@ import {
   longLivedUserToken,
   FacebookError,
 } from "@/lib/facebook";
-import { STATE_COOKIE } from "../connect/route";
+import { AccountTakenError, linkAccount } from "@/lib/domain/social";
 
 const RETURN = {
   page: "/buyer/campaigns/new",
-  profile: "/worker/profile",
+  profile: "/worker/accounts",
 } as const;
 
 type Mode = keyof typeof RETURN;
 
 function back(req: Request, mode: Mode, params: Record<string, string>) {
-  const url = new URL(RETURN[mode], req.url);
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = NextResponse.redirect(url);
-  res.cookies.delete(STATE_COOKIE);
-  return res;
+  return finishOAuth(req, "facebook", RETURN[mode], params);
 }
 
 /**
@@ -37,12 +32,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  const expected = req.headers
-    .get("cookie")
-    ?.split(";")
-    .map((c) => c.trim())
-    .find((c) => c.startsWith(`${STATE_COOKIE}=`))
-    ?.slice(STATE_COOKIE.length + 1);
+  const expected = readState(req, "facebook");
 
   const mode: Mode = expected?.startsWith("profile.") ? "profile" : "page";
 
@@ -57,70 +47,60 @@ export async function GET(req: Request) {
       ? await linkProfile(req, auth.id, userToken)
       : await connectPages(req, auth.id, userToken);
   } catch (e) {
+    if (e instanceof AccountTakenError) return back(req, "profile", { fb: "taken" });
     const message = e instanceof FacebookError ? e.message : "Connection failed";
     console.error("[facebook] callback failed:", message);
     return back(req, mode, { fb: "failed" });
   }
 }
 
-/** Buyer flow: store every page they administer, each with its own token. */
+/**
+ * Buyer flow: store every page they administer, each with its own token, plus
+ * the Instagram business account behind it where there is one — that account
+ * is the only thing an Instagram campaign can be measured against.
+ */
 async function connectPages(req: Request, userId: string, userToken: string) {
   const pages = await listManagedPages(userToken);
   if (!pages.length) return back(req, "page", { fb: "no_pages" });
 
   for (const p of pages) {
+    const shared = {
+      name: p.name,
+      username: p.username ?? null,
+      accessToken: p.accessToken,
+      followers: p.followers,
+      instagramId: p.instagram?.id ?? null,
+      instagramUsername: p.instagram?.username ?? null,
+      instagramFollowers: p.instagram?.followers ?? null,
+    };
     await prisma.facebookPage.upsert({
       where: { pageId: p.pageId },
-      update: {
-        // Re-connecting hands the page to whoever proved they administer it.
-        ownerId: userId,
-        name: p.name,
-        username: p.username ?? null,
-        accessToken: p.accessToken,
-        followers: p.followers,
-        lastError: null,
-      },
-      create: {
-        ownerId: userId,
-        pageId: p.pageId,
-        name: p.name,
-        username: p.username ?? null,
-        accessToken: p.accessToken,
-        followers: p.followers,
-      },
+      // Re-connecting hands the page to whoever proved they administer it.
+      update: { ownerId: userId, lastError: null, ...shared },
+      create: { ownerId: userId, pageId: p.pageId, ...shared },
     });
   }
-  return back(req, "page", { fb: "connected", pages: String(pages.length) });
+
+  const withInstagram = pages.filter((p) => p.instagram).length;
+  return back(req, "page", {
+    fb: "connected",
+    pages: String(pages.length),
+    ...(withInstagram ? { ig: String(withInstagram) } : {}),
+  });
 }
 
 /** Worker flow: bind this Facebook account to the TaskHub account. */
 async function linkProfile(req: Request, userId: string, userToken: string) {
   const profile = await getProfile(userToken);
 
-  try {
-    await prisma.socialAccount.upsert({
-      where: { userId_provider: { userId, provider: "facebook" } },
-      update: {
-        providerId: profile.providerId,
-        name: profile.name,
-        profileUrl: profile.profileUrl ?? null,
-      },
-      create: {
-        userId,
-        provider: "facebook",
-        providerId: profile.providerId,
-        name: profile.name,
-        profileUrl: profile.profileUrl ?? null,
-      },
-    });
-  } catch (e) {
-    // The (provider, providerId) unique index: this Facebook account is
-    // already linked to a different TaskHub worker.
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-      return back(req, "profile", { fb: "taken" });
-    }
-    throw e;
-  }
+  await linkAccount({
+    userId,
+    provider: "facebook",
+    providerId: profile.providerId,
+    name: profile.name,
+    profileUrl: profile.profileUrl ?? null,
+    linkMethod: "oauth",
+  });
 
   return back(req, "profile", {
     fb: "linked",

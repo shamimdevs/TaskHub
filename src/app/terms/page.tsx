@@ -32,8 +32,9 @@ const SECTIONS: { id: string; title: string; body: React.ReactNode }[] = [
           agreement between you and {APP_NAME} (&ldquo;we&rdquo;,
           &ldquo;us&rdquo;, &ldquo;the platform&rdquo;). By creating an account,
           accessing the site, or completing or ordering any task, you confirm
-          that you have read, understood and agree to these Terms and to our
-          Privacy Policy. If you do not agree, do not use {APP_NAME}.
+          that you have read, understood and agree to these Terms and to our{" "}
+          <Link href="/privacy">Privacy Policy</Link>. If you do not agree, do not
+          use {APP_NAME}.
         </p>
         <p>
           We may update these Terms from time to time. Material changes will be
@@ -467,7 +468,11 @@ export default function TermsPage() {
 
         <div className="mt-12 rounded-2xl border border-border bg-card p-5 text-sm text-fg-muted shadow-soft">
           By continuing to use {APP_NAME} you acknowledge that you have read and
-          agree to these Terms and to our Privacy Policy.
+          agree to these Terms and to our{" "}
+          <Link href="/privacy" className="text-brand underline underline-offset-2">
+            Privacy Policy
+          </Link>
+          .
           <div className="mt-4 flex flex-wrap gap-3">
             <Link
               href="/register"

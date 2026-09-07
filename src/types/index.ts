@@ -94,6 +94,11 @@ export interface Campaign {
   /** Set when the campaign is checked automatically against a connected page. */
   pageId?: string | null;
   baselineFollowers?: number | null;
+  /**
+   * The target's own id on the platform, when it can be asked directly whether
+   * a given worker followed — a YouTube channel id today.
+   */
+  targetRef?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -242,11 +247,34 @@ export interface PlatformSettings {
   holdDays: number;
   referralBonus: number;
   autoApproveDeposits: boolean;
-  /** Hands-off Facebook follow campaigns: no review, count-checked payouts. */
+  /** Hands-off auto-verified campaigns: no review, automatically settled. */
   autoVerify: boolean;
-  /** Minutes a submission waits for the follower count to move. */
+  /** Minutes a submission waits for the platform to confirm it. */
   autoVerifyGraceMins: number;
   maintenanceMode: boolean;
+}
+
+/** How a worker's linked account came to be attached to their account. */
+export type LinkMethod = "oauth" | "code" | "claimed";
+
+/** A worker's linked social account. Tokens never reach the client. */
+export interface SocialAccount {
+  id: string;
+  provider: Platform;
+  name: string;
+  username?: string | null;
+  profileUrl?: string | null;
+  linkMethod: LinkMethod;
+  /** True once the provider itself confirmed the account. */
+  verified: boolean;
+  /** True when the provider can be asked directly about this worker. */
+  autoCheckable: boolean;
+  /** Set while a claim waits for its code to appear on the public profile. */
+  verifyCode?: string | null;
+  /** Whether that wait can ever end on this server. */
+  codeVerifiable: boolean;
+  lastError?: string | null;
+  connectedAt: string;
 }
 
 /** What `GET /api/settings` returns: the singleton plus the rate card. */

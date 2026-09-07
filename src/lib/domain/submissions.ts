@@ -30,8 +30,19 @@ export async function createSubmission(
     // through several TaskHub accounts.
     const linked = await tx.socialAccount.findUnique({
       where: { userId_provider: { userId: worker.id, provider: task.platform } },
-      select: { profileUrl: true },
+      select: { profileUrl: true, refreshToken: true },
     });
+
+    // A campaign with a `targetRef` is settled by asking the platform about
+    // this worker specifically, which is impossible without their linked
+    // account. Say so now rather than accepting a submission that could only
+    // ever sit pending waiting for an answer that cannot come.
+    if (task.campaign.targetRef && !linked?.refreshToken) {
+      throw new DomainError(
+        `Link your ${task.platform} account on your profile first — this task is checked against it`,
+      );
+    }
+
     const proofUrl = linked?.profileUrl ?? input.proofUrl.trim();
     if (!proofUrl) throw new DomainError("Add your profile link");
 

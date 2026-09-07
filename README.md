@@ -43,6 +43,7 @@ Fill in `.env`:
 npm install
 npm run db:migrate      # first run: prisma migrate dev --name init
 npm run db:seed
+npm run db:seed:demo    # optional — a populated app to click through
 ```
 
 Seed creates exactly three things: the **super admin** account, the platform
@@ -117,21 +118,65 @@ off there, which hides it from the campaign form.
 Defaults for a fresh install live in `src/lib/constants.ts` (`USD_RATE`,
 `RATE_CARD`, `LIMITS`, `FEES`).
 
-## Automation — Facebook follows
+## Automation — who actually followed
 
-Facebook follow campaigns run without anyone touching them. **Facebook exposes
-no API for _who_ follows a page** (`user_likes` was removed in Graph API v3.0),
-so verification uses the one number it does give: the page's follower count.
+There are only two honest ways to know whether a worker did what they were paid
+for, and **which one applies is decided by the platform, not by us**. The code
+splits along exactly that line (`src/lib/domain/verification.ts`), and so does
+the UI — a worker is told which kind of check their proof will get.
+
+| Platform | Check | What it actually proves |
+| --- | --- | --- |
+| YouTube (subscribe) | **Direct** — ask YouTube, as that worker | This worker subscribes to this channel |
+| Facebook (follow) | **Count** — the page's follower count moved | Someone followed; who is inferred |
+| Instagram (follow) | **Count** — the business account's follower count moved | Someone followed; who is inferred |
+
+Everything else still goes through the human review queue.
+
+`POST /api/cron/verify` (every few minutes, `CRON_SECRET`) runs both passes and
+then releases every reward whose hold has elapsed. It recomputes from database
+state, so repeating it is a no-op. Turn it all off with **autoVerify** in
+/admin/settings.
+
+### Direct — YouTube
+
+YouTube is the only platform here that will answer the real question.
+`subscriptions.list?mine=true&forChannelId=<id>` runs with the *worker's* own
+read-only token and says plainly whether they subscribe. Consequences worth
+knowing:
+
+- **The buyer connects nothing.** Creating a **youtube + subscribe** campaign
+  resolves the channel id straight out of the pasted link (`Campaign.targetRef`)
+  and goes live immediately. A `/channel/UC…` link resolves with no credentials;
+  an `@handle` needs `YOUTUBE_API_KEY`, and without it the campaign simply falls
+  back to manual review.
+- **A private subscription list is not an obstacle** — we read the worker's own
+  subscriptions with the worker's own token.
+- **One filtered call per submission**, not a scan, however many thousands of
+  channels the worker follows.
+- **Unsubscribing during the hold is caught by name**, not inferred from a
+  number that fell.
+- **No answer is not a rejection.** A worker with no linked YouTube account, or
+  a revoked token, is *deferred*: the submission stays pending for a human. Only
+  a definite "not subscribed", after the grace window, is turned down.
+
+### Count — Facebook and Instagram
+
+Neither platform will say *who* follows an account, at any price (`user_likes`
+went in Graph API v3.0; Instagram's Basic Display API was shut down in December
+2024). All that is left is the account's own follower count.
 
 1. The buyer connects their page once — `/api/integrations/facebook/connect` →
-   Facebook Login (`pages_show_list`, `pages_read_engagement`) → the callback
-   stores one `FacebookPage` row per page, each with its own page token.
-2. Creating a **facebook + follow** campaign against a connected page reads the
-   live follower count as `baselineFollowers` and puts the campaign straight to
-   `active` — no review queue. The task link is the connected page itself, so
-   workers can only be sent to the account being measured.
-3. `POST /api/cron/verify` (every few minutes, `CRON_SECRET`) polls each page,
-   records a `PageFollowerSample`, and settles every live campaign:
+   Facebook Login → one `FacebookPage` row per page, each with its own token.
+   `instagram_basic` also captures the **Instagram business account** behind the
+   page, which is the only thing an Instagram campaign can be measured against;
+   a page without one cannot host an Instagram campaign, and the form says so.
+2. Creating a **facebook/instagram + follow** campaign against a connected
+   account records the live count as `baselineFollowers` and goes live with no
+   review. The task link is the connected account itself, so workers can only be
+   sent to what is being measured.
+3. Each pass polls the account, records a `PageFollowerSample` (tagged with the
+   platform, since one page can back both kinds of campaign), and settles:
 
    ```
    room = (followers - baseline) - (already cleared)
@@ -142,42 +187,104 @@ so verification uses the one number it does give: the page's follower count.
    turn it down. If the count falls below what was already cleared someone
    unfollowed, so the newest still-held rewards are reversed, newest first.
    Rewards past their hold are final — the hold window _is_ the guarantee period.
-4. The same call releases every reward whose hold has elapsed, so the dollars
-   land in the worker's spendable balance on their own, and a campaign that has
-   delivered its quantity flips to `completed`.
 
 Everything the checker does is recorded on the submission: `autoVerified = true`,
-`reviewedById = null`, and a plain-English `reviewerNote`. The run recomputes
-from database state, so repeating it is a no-op.
-
-Turn it all off with **autoVerify** in /admin/settings; campaigns then fall back
-to the manual review queue. Without `FACEBOOK_APP_ID`/`FACEBOOK_APP_SECRET` the
-connect button is hidden and every campaign is manual.
+`reviewedById = null`, and a plain-English `reviewerNote`.
 
 ### Connected accounts (worker side)
 
-A worker links their own Facebook account from **/worker/profile** →
-`/api/integrations/facebook/connect?as=profile`. Both flows share one app and
-one redirect URI; the state cookie carries which one it was.
+A worker links their accounts from **/worker/profile**:
+
+| Provider | Route | Notes |
+| --- | --- | --- |
+| YouTube | `/api/integrations/youtube/connect` | Google OAuth, `youtube.readonly`, offline. The refresh token is the point — without one the checker goes quiet an hour after linking. |
+| Facebook | `/api/integrations/facebook/connect?as=profile` | Shares one app and redirect URI with the buyer page flow; the state cookie carries which. |
+| Instagram | `/api/integrations/instagram/connect` | Business/Creator accounts only. |
 
 Linking is what makes a proof mean anything:
 
 - the profile link on every submission comes from the linked account, so there
   is nothing to type and nothing to fake — `createSubmission` ignores whatever
   URL was posted when an account is linked for that platform;
-- `SocialAccount` is unique on `(provider, providerId)`, so one Facebook account
+- `SocialAccount` is unique on `(provider, providerId)`, so one social account
   can only ever belong to one TaskHub worker, and unique on `(userId, provider)`,
   so a worker keeps exactly one account per platform;
 - unlinking leaves past submissions untouched — they keep the link they were
   sent with.
 
+Connected accounts live at **/worker/accounts** (its own nav entry); the
+profile page links across to it.
+
+**Claimed handles.** Instagram Login authorises only Business and Creator
+accounts, so most workers cannot complete it at all. Those workers instead type
+their handle (`POST /api/integrations/social`), stored as
+`claimed:<platform>:<handle>` with `linkMethod: "claimed"`. It proves nothing on
+its own — the card labels it *Self-declared* — but it still reserves the
+account, which is what stops one handle farming a task through twenty TaskHub
+accounts. A later OAuth link displaces anyone else's claim on that handle:
+whoever proves it beats whoever typed it.
+
+**Profile codes — claims that settle themselves.** A self-declared account with
+no way to ever become verified is a dead end, so where the public profile can be
+read back, the claim issues a one-time `TASKHUB-XXXXXX` code. The worker pastes
+it into their profile; `runProfileCodeVerification()` reads it back on the same
+cron pass as everything else and promotes the account to
+`linkMethod: "code"` — real proof of control, with no app credentials involved.
+`POST /api/integrations/social/:id/check` runs the same check on demand for
+anyone who does not want to wait.
+
+This works for **YouTube only**, and needs only `YOUTUBE_API_KEY` — the Data API
+returns a channel's public description for a plain API key. Facebook and
+Instagram serve a login wall to anything that is not their own app, so there is
+no honest way to read a code there; those stay self-declared until
+`FACEBOOK_APP_ID`/`INSTAGRAM_APP_ID` are set, and the panel says exactly that
+instead of implying the worker did something wrong.
+
+Note the ceiling: a code-verified YouTube account proves the channel is theirs
+but carries no token, so it still cannot take an auto-checked **subscribe**
+task — `createSubmission` requires a refresh token for any campaign with a
+`targetRef`. The card says so rather than letting them find out by being stuck.
+
+| `linkMethod` | How | Verified badge | Can auto-check subscribes |
+| --- | --- | --- | --- |
+| `oauth` | Platform confirmed it | yes | yes (YouTube) |
+| `code` | Code read off the public profile | yes | no |
+| `claimed` | Typed, nothing checked | no | no |
+
 Facebook only returns a usable profile URL with the `user_link` permission
 (App Review), so a worker may be asked to paste their profile link once; it is
-stored on the linked account and reused from then on. Instagram and YouTube are
-listed in the card but not connectable yet.
+stored on the linked account and reused from then on.
 
-Other platforms and actions still go through the human queue — the count-based
-check only makes sense where the target is a page whose followers we can read.
+## Demo data
+
+`npm run db:seed:demo` fills a fresh install with people, campaigns, tasks,
+submissions and — the part that is otherwise hard to see — **connected accounts
+in every verification state**, without a single OAuth app configured.
+
+Every demo user is `<name>@demo.taskhub.test`, password `Password123!`
+(override with `SEED_DEMO_PASSWORD`). Rows are upserted on a stable key, so
+re-running replaces the demo rather than stacking a second copy, and nothing
+outside the demo domain is touched. It refuses to run with
+`NODE_ENV=production`.
+
+Sign in as each worker to see a different state on **/worker/accounts**:
+
+| Worker | What their accounts show |
+| --- | --- |
+| `rakib` | YouTube linked with a token — the only state that can take auto-checked subscribe tasks. Instagram self-declared. |
+| `nusrat` | YouTube mid-verification: the `TASKHUB-…` code is on screen and the cron is watching for it. Facebook linked but missing its profile link. |
+| `tanvir` | YouTube proved by profile code — verified, but no token, so the card explains subscribe tasks still need the full connection. |
+| `shila` | YouTube grant revoked — the reconnect warning. |
+
+Buyers `brandhub` and `greenleaf` own the campaigns. `yt-subs` carries a
+`targetRef`, so it is the one settled worker-by-worker; the Facebook one is
+settled by follower count. Submissions are seeded across pending / on-hold /
+approved / rejected, including a *deferred* one — a worker the checker could
+not get an answer for, left for a human rather than refused.
+
+The tokens are placeholders, so a real call to Google will fail and say so.
+That is deliberate: it is also the honest demo of what a revoked grant looks
+like. Add `YOUTUBE_API_KEY` and re-link to see checks actually succeed.
 
 ## Reward holds
 
@@ -199,5 +306,6 @@ Wire that to a scheduler (cron / Vercel Cron / GitHub Action) in production.
 | `npm run db:migrate` | `prisma migrate dev` |
 | `npm run db:deploy` | `prisma migrate deploy` (production) |
 | `npm run db:seed` | create the super admin, settings + rate card |
+| `npm run db:seed:demo` | add demo people, campaigns and linked accounts |
 | `npm run db:studio` | Prisma Studio |
 | `npm run db:reset` | drop, re-migrate, re-seed |

@@ -95,9 +95,19 @@ export const updateUserSchema = z.object({
   amount: z.number().optional(),
 });
 
-/** Profile link a worker supplies when Facebook did not return one. */
+/** Profile link a worker supplies when the platform did not return one. */
 export const setProfileUrlSchema = z.object({
   profileUrl: z.string().trim().url().max(500),
+});
+
+/**
+ * A handle a worker claims for a platform that will not confirm an ordinary
+ * personal account. A full profile URL is accepted too — people paste both —
+ * and normalised server-side.
+ */
+export const claimSocialAccountSchema = z.object({
+  provider: platformSchema,
+  username: z.string().trim().min(2).max(200),
 });
 
 export const contactSchema = z.object({

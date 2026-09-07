@@ -16,6 +16,7 @@ import {
   UserRound,
   Gift,
   FileCheck2,
+  Link2,
 } from "lucide-react";
 import type { Role } from "@/types";
 
@@ -34,6 +35,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: "My submissions", href: "/worker/submissions", icon: ClipboardCheck, bottom: true },
     { label: "Wallet", href: "/worker/wallet", icon: Wallet, bottom: true },
     { label: "Withdraw", href: "/worker/withdraw", icon: ArrowDownToLine },
+    { label: "Connected accounts", href: "/worker/accounts", icon: Link2 },
     { label: "Referrals", href: "/worker/referrals", icon: Gift },
     { label: "Notifications", href: "/worker/notifications", icon: Bell },
     { label: "Profile", href: "/worker/profile", icon: UserRound, bottom: true },

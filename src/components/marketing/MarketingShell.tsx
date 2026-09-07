@@ -4,7 +4,7 @@ import { APP_NAME } from "@/lib/constants";
 import { MarketingBottomNav } from "./MarketingBottomNav";
 
 /**
- * Shared chrome for the standalone marketing pages (About, Contact, Terms):
+ * Shared chrome for the standalone marketing pages (About, Contact, Terms, Privacy):
  * sticky brand header, centered content column, and a footer with the
  * cross-links. Keeps those pages consistent without touching the landing page.
  */
@@ -61,6 +61,9 @@ export function MarketingShell({
             </Link>
             <Link href="/terms" className="hover:text-fg">
               Terms
+            </Link>
+            <Link href="/privacy" className="hover:text-fg">
+              Privacy
             </Link>
           </nav>
         </div>
