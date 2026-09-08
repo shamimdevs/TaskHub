@@ -34,7 +34,7 @@ const SCOPES: Record<FacebookMode, string[]> = {
   ],
   // user_link returns a usable profile URL; without App Review it is granted
   // only to app admins, so the profile link may come back empty.
-  profile: ["public_profile", "user_link"],
+  profile: ["public_profile"],
 };
 
 export const facebookConfigured = Boolean(FACEBOOK_APP_ID && APP_SECRET);
