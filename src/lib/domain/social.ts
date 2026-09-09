@@ -117,6 +117,111 @@ export function normalizeHandle(input: string): string {
   return (fromUrl || trimmed).replace(/^@/, "").toLowerCase();
 }
 
+/** The shape a handle has to have before we will store it. */
+function isHandle(value: string): boolean {
+  return /^[a-z0-9._-]{2,60}$/.test(value);
+}
+
+/**
+ * Hosts a profile link is allowed to live on, per platform.
+ *
+ * Not tidiness — this is the hole it closes. The proof link on every
+ * submission comes from the linked account, so with nobody checking the domain
+ * a worker can verify an account they genuinely own and then point every proof
+ * at somebody else's profile, or at a site we have never heard of.
+ */
+const PROFILE_HOSTS: Record<Platform, string[]> = {
+  youtube: ["youtube.com"],
+  facebook: ["facebook.com", "fb.com"],
+  instagram: ["instagram.com"],
+  tiktok: ["tiktok.com"],
+  twitter: ["twitter.com", "x.com"],
+};
+
+/** Path segments that introduce a handle rather than being one. */
+const HANDLE_PREFIXES = new Set(["c", "user"]);
+
+/** The canonical public link for a handle on a platform. */
+export function profileUrlFor(provider: Platform, handle: string): string {
+  switch (provider) {
+    case "youtube":
+      return `https://www.youtube.com/@${handle}`;
+    case "instagram":
+      return instagramProfileUrl(handle);
+    case "facebook":
+      return /^\d{5,30}$/.test(handle)
+        ? `https://www.facebook.com/profile.php?id=${handle}`
+        : `https://www.facebook.com/${handle}`;
+    case "tiktok":
+      return `https://www.tiktok.com/@${handle}`;
+    case "twitter":
+      return `https://x.com/${handle}`;
+  }
+}
+
+/** What a profile link resolves to: who it points at, in one settled spelling. */
+export interface ProfileLink {
+  /** The handle the link names, in the shape a claim stores. */
+  handle: string;
+  /** The link itself, canonical. */
+  url: string;
+}
+
+/**
+ * Read a pasted profile link, or refuse it.
+ *
+ * Canonical on purpose: `facebook.com/x`, `www.facebook.com/x/` and
+ * `m.facebook.com/x?ref=1` are one profile, and re-saving any of them must not
+ * read as a change — somebody tidying up their own link should not lose their
+ * verification over it.
+ */
+export function parseProfileUrl(
+  provider: Platform,
+  input: string,
+): ProfileLink | null {
+  let url: URL;
+  try {
+    url = new URL(input.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+
+  const host = url.hostname.toLowerCase().replace(/^(?:www|m|web|mobile)\./, "");
+  if (!PROFILE_HOSTS[provider].includes(host)) return null;
+
+  const segments = url.pathname.split("/").filter(Boolean);
+
+  // Facebook's id-based links carry the person in the query string; there is
+  // nothing in the path that tells two of them apart.
+  if (provider === "facebook" && segments[0]?.toLowerCase() === "profile.php") {
+    const id = url.searchParams.get("id")?.trim() ?? "";
+    return /^\d{5,30}$/.test(id)
+      ? { handle: id, url: profileUrlFor("facebook", id) }
+      : null;
+  }
+
+  // `/channel/UC…` names a channel that cannot be looked up by handle, and the
+  // code check runs by handle — accepting it would strand the worker on a
+  // verification that could never finish. Ask for the @handle link instead.
+  if (provider === "youtube" && segments[0]?.toLowerCase() === "channel") {
+    return null;
+  }
+
+  // `/@handle`, `/c/name` and `/user/name` all name the same thing to us.
+  const first = segments[0] ?? "";
+  const raw = first.startsWith("@")
+    ? first
+    : HANDLE_PREFIXES.has(first.toLowerCase())
+      ? (segments[1] ?? "")
+      : first;
+
+  const handle = normalizeHandle(raw);
+  return isHandle(handle)
+    ? { handle, url: profileUrlFor(provider, handle) }
+    : null;
+}
+
 export interface LinkInput {
   userId: string;
   provider: Platform;
@@ -208,8 +313,21 @@ export async function claimAccount(
     throw new DomainError(`${provider} accounts have to be linked, not claimed`);
   }
   const username = normalizeHandle(handle);
-  if (!/^[a-z0-9._-]{2,60}$/.test(username)) {
+  if (!isHandle(username)) {
     throw new DomainError("That does not look like a valid username");
+  }
+
+  // Re-saving the handle they have already proved is not a change, and must
+  // not cost them the proof.
+  const existing = await prisma.socialAccount.findUnique({
+    where: { userId_provider: { userId, provider } },
+  });
+  if (
+    existing &&
+    existing.linkMethod !== "claimed" &&
+    existing.username === username
+  ) {
+    return existing;
   }
 
   const account = await linkAccount({
@@ -234,6 +352,99 @@ export async function claimAccount(
   // re-claiming a handle they have proved before, is done without waiting for
   // the next cron pass.
   return (await checkProfileCode(updated)) ?? updated;
+}
+
+/**
+ * Point an account's proof link somewhere new.
+ *
+ * The first fill is not a change. Several platforms hand back an account with
+ * no public link — Facebook without `user_link` above all — and a worker
+ * supplying the one the provider withheld is completing the link they already
+ * verified, not moving it.
+ *
+ * Changing a link that is already there is a different act. Every future proof
+ * is sent as that URL, so a link that can be swapped freely afterwards would
+ * make verification mean nothing: prove a throwaway account, then point the
+ * proofs at somebody real. A change therefore puts the account back where a
+ * fresh claim starts — holding the handle and nothing more — and it has to be
+ * proved again: by code where the profile can be read back, by reconnecting
+ * where it cannot.
+ */
+export async function setProfileUrl(
+  account: SocialAccount,
+  input: string,
+): Promise<SocialAccount> {
+  const link = parseProfileUrl(account.provider, input);
+  if (!link) {
+    throw new DomainError(
+      account.provider === "youtube"
+        ? "Paste your channel's @handle link, like https://www.youtube.com/@yourchannel"
+        : `That is not a ${account.provider} profile link`,
+    );
+  }
+
+  // The same profile, differently spelled, or simply saved again. Nothing has
+  // moved, so nothing has to be proved again.
+  if (link.url === account.profileUrl) return account;
+
+  // Nothing was there to change: the verification never rested on this link,
+  // so filling it in costs nothing.
+  if (!account.profileUrl) {
+    return prisma.socialAccount.update({
+      where: { id: account.id },
+      data: { profileUrl: link.url },
+    });
+  }
+
+  return reclaimAccount(account, link);
+}
+
+/**
+ * Put a linked account back to a bare claim of `link`, and start proving that
+ * claim again wherever this server can.
+ */
+async function reclaimAccount(
+  account: SocialAccount,
+  link: ProfileLink,
+): Promise<SocialAccount> {
+  const verifiable = codeVerifiable(account.provider);
+
+  let reset: SocialAccount;
+  try {
+    reset = await prisma.socialAccount.update({
+      where: { id: account.id },
+      data: {
+        // A claim holds a placeholder id, never a real one: the provider id we
+        // were handed belonged to the account they have just moved away from.
+        providerId: claimedId(account.provider, link.handle),
+        name: `@${link.handle}`,
+        username: link.handle,
+        profileUrl: link.url,
+        linkMethod: "claimed",
+        verifyCode: verifiable ? newVerifyCode() : null,
+        verifyCodeAt: verifiable ? new Date() : null,
+        // The tokens vouched for the old account and say nothing about this
+        // one; keeping them would go on auto-checking a channel the worker no
+        // longer claims.
+        accessToken: null,
+        refreshToken: null,
+        tokenExpiresAt: null,
+        scope: null,
+        lastError: null,
+        lastCheckedAt: null,
+      },
+    });
+  } catch (e) {
+    // Somebody else already holds the account this link points at — rule 1.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      throw new AccountTakenError(account.provider);
+    }
+    throw e;
+  }
+
+  // A worker moving back to a handle they have proved before is finished here,
+  // rather than waiting for the next cron pass.
+  return (await checkProfileCode(reset)) ?? reset;
 }
 
 /**

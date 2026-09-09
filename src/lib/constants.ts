@@ -104,6 +104,18 @@ export const LIMITS = {
   referralBonus: 0.05,
 } as const;
 
+/**
+ * What a platform calls its audience number — the one a campaign's baseline is
+ * a reading of.
+ */
+export const AUDIENCE_NOUN: Record<Platform, string> = {
+  facebook: "followers",
+  instagram: "followers",
+  youtube: "subscribers",
+  tiktok: "followers",
+  twitter: "followers",
+};
+
 export const PLATFORMS: Record<
   Platform,
   { label: string; color: string; actions: TaskType[] }

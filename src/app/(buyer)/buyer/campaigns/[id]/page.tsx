@@ -16,6 +16,7 @@ import {
 } from "@/redux/features/campaigns/campaignsApi";
 import { useGetSubmissionsQuery } from "@/redux/features/submissions/submissionsApi";
 import { formatMoney, formatDate, formatNumber, pct } from "@/lib/utils";
+import { AUDIENCE_NOUN } from "@/lib/constants";
 import { t } from "@/lib/i18n/en";
 
 export default function CampaignDetailPage({
@@ -67,6 +68,14 @@ export default function CampaignDetailPage({
                         >
                           {c.targetUrl}
                         </a>
+                        {/* The reading taken when the campaign was created —
+                            what delivery is measured from. */}
+                        {c.baselineFollowers != null && (
+                          <p className="mt-1 text-xs text-fg-subtle">
+                            {formatNumber(c.baselineFollowers)}{" "}
+                            {AUDIENCE_NOUN[c.platform]} at launch
+                          </p>
+                        )}
                       </div>
                       <CampaignStatusBadge status={c.status} />
                     </div>

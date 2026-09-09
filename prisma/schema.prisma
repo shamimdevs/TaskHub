@@ -320,6 +320,12 @@ model Submission {
   /// Cleared by the follower-count checker rather than a person.
   autoVerified  Boolean          @default(false)
 
+  /// One worker, one task, once — and enforced here rather than only in
+  /// `createSubmission`, because the check there reads before it writes: two
+  /// requests racing (a double-tap, a second tab, a retry on a slow network)
+  /// can both find nothing and both insert, taking two slots and two rewards
+  /// for one piece of work. This index is what actually makes that impossible.
+  @@unique([taskId, workerId])
   @@index([workerId])
   @@index([campaignId])
   @@index([taskId])

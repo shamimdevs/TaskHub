@@ -2,7 +2,13 @@
 
 import { use, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BadgeCheck, CheckCircle2, ExternalLink, ShieldAlert } from "lucide-react";
+import {
+  ArrowRight,
+  BadgeCheck,
+  CheckCircle2,
+  ExternalLink,
+  ShieldAlert,
+} from "lucide-react";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { QueryBoundary } from "@/components/ui/QueryBoundary";
@@ -42,8 +48,11 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
       setDone(true);
       toast.success(t.worker.submissionSent);
       setTimeout(() => router.push("/worker/submissions"), 1200);
-    } catch {
-      toast.error(t.common.somethingWrong);
+    } catch (e) {
+      // "You have already submitted this task" and "No slots left" are both
+      // things the worker can act on; a generic failure tells them nothing.
+      const message = (e as { data?: { error?: string } })?.data?.error;
+      toast.error(message ?? t.common.somethingWrong);
     }
   };
 
@@ -111,6 +120,29 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
               <Card>
                 <CardHeader title={t.worker.submitProof} />
                 <CardBody className="space-y-3">
+                  {/* Already theirs. Nothing on this card would do anything,
+                      so none of it is shown — a disabled form still reads as
+                      an invitation to try. */}
+                  {task.alreadySubmitted ? (
+                    <>
+                      <Alert tone="info" title="You have already done this task">
+                        Each task counts once per worker, so there is nothing
+                        more to submit here.
+                      </Alert>
+                      <LinkButton
+                        href="/worker/submissions"
+                        variant="outline"
+                        fullWidth
+                        iconRight={ArrowRight}
+                      >
+                        See your submission
+                      </LinkButton>
+                      <LinkButton href="/worker/tasks" variant="ghost" fullWidth>
+                        Find another task
+                      </LinkButton>
+                    </>
+                  ) : (
+                  <>
                   {!opened && (
                     <Alert tone="info">
                       Open the task link first, complete the action, then submit
@@ -168,6 +200,8 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
                   >
                     {done ? "Submitted" : t.worker.submitProof}
                   </Button>
+                  </>
+                  )}
                 </CardBody>
               </Card>
             </div>

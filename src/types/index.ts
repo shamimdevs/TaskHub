@@ -117,6 +117,14 @@ export interface Task {
   buyerName: string;
   postedAt: string;
   expiresAt?: string;
+  /**
+   * Whether the signed-in worker has already taken this task. Only the
+   * single-task endpoint fills it in — the list never returns a task they have
+   * done, so there is nothing there to mark.
+   */
+  alreadySubmitted?: boolean;
+  /** Their existing submission, to send them to. */
+  submissionId?: string | null;
 }
 
 export interface Submission {

@@ -14,6 +14,10 @@ export async function GET(req: Request) {
     where: {
       slotsLeft: { gt: 0 },
       campaign: { status: "active" },
+      // A task is done once per worker, so one they have already submitted is
+      // not available to them. Filtering it out here is the difference between
+      // finding that out now and finding it out after doing the work.
+      submissions: { none: { workerId: auth.id } },
       ...(platform && platform !== "all" ? { platform: platform as Platform } : {}),
       ...(type && type !== "all" ? { type: type as TaskType } : {}),
     },

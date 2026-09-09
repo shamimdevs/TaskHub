@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, isResponse, json, apiError, parseBody } from "@/lib/api";
 import { setProfileUrlSchema } from "@/lib/validation";
-import { publicAccount } from "@/lib/domain/social";
+import { publicAccount, setProfileUrl } from "@/lib/domain/social";
+import { DomainError } from "@/lib/domain/errors";
 
 async function owned(req: Request, id: string) {
   const auth = await requireApiUser(req);
@@ -13,9 +14,14 @@ async function owned(req: Request, id: string) {
 }
 
 /**
- * Fill in the profile link. Facebook only hands it over with the `user_link`
+ * Set the profile link. Facebook only hands it over with the `user_link`
  * permission, so a worker may have to supply it once; after that every proof
  * uses it automatically.
+ *
+ * Supplying the link the provider withheld leaves the verification alone.
+ * *Changing* a link that is already there does not: the proof link is what the
+ * verification stands behind, so moving it drops the account back to a bare
+ * claim that has to be proved again. See `setProfileUrl`.
  */
 export async function PATCH(
   req: Request,
@@ -28,11 +34,13 @@ export async function PATCH(
   const body = await parseBody(req, setProfileUrlSchema);
   if (isResponse(body)) return body;
 
-  const updated = await prisma.socialAccount.update({
-    where: { id },
-    data: { profileUrl: body.profileUrl },
-  });
-  return json(publicAccount(updated));
+  try {
+    const updated = await setProfileUrl(account, body.profileUrl);
+    return json(publicAccount(updated));
+  } catch (e) {
+    if (e instanceof DomainError) return apiError(e.status, e.message);
+    throw e;
+  }
 }
 
 /** Unlink. Past submissions keep the proof link they were sent with. */

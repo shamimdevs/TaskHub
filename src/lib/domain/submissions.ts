@@ -5,7 +5,35 @@ import { postTransaction, settlePendingReward } from "./wallet";
 import { maybeQualifyReferral } from "./referrals";
 import { DomainError } from "./errors";
 
+/** What a worker is told when they try to take the same task twice. */
+const ALREADY_SUBMITTED = "You have already submitted this task";
+
+/**
+ * Take a task, once.
+ *
+ * The duplicate check below is the courteous half: it answers before any slot
+ * is spent, so the ordinary case gets a plain refusal. It is not the guarantee
+ * — it reads and then writes, and two requests racing each other can both read
+ * nothing. `Submission @@unique([taskId, workerId])` is the guarantee, and the
+ * catch at the bottom turns the loser of that race into the same refusal.
+ */
 export async function createSubmission(
+  worker: { id: string; name: string },
+  input: { taskId: string; proofUrl: string; proofNote?: string; screenshotUrl?: string },
+) {
+  try {
+    return await submitOnce(worker, input);
+  } catch (e) {
+    // The unique index caught what the read-then-write could not. Same answer
+    // as the sequential path: they already did this one.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      throw new DomainError(ALREADY_SUBMITTED, 409);
+    }
+    throw e;
+  }
+}
+
+async function submitOnce(
   worker: { id: string; name: string },
   input: { taskId: string; proofUrl: string; proofNote?: string; screenshotUrl?: string },
 ) {
@@ -22,7 +50,7 @@ export async function createSubmission(
       where: { taskId: task.id, workerId: worker.id },
       select: { id: true },
     });
-    if (dupe) throw new DomainError("You have already submitted this task", 409);
+    if (dupe) throw new DomainError(ALREADY_SUBMITTED, 409);
 
     // A linked account is the proof: the profile link comes from it rather
     // than from whatever was typed into the form. One social account can only

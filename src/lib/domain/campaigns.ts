@@ -52,50 +52,86 @@ export interface CreateCampaignInput {
 }
 
 /**
- * What makes a campaign run without a human: where workers are sent, and how
- * their submissions will be settled.
+ * What we could find out about a campaign's target before it launched: where
+ * workers are sent, how their submissions will be settled, and what the
+ * account was already sitting at.
  */
-interface AutoTarget {
+interface ResolvedTarget {
   /** Canonical link, so workers always land on the account being measured. */
   targetUrl: string;
   /** Count-checked platforms: the connected page and its starting count. */
   pageId?: string;
+  /**
+   * The target's own number the moment the campaign was created.
+   *
+   * Recorded whether or not the campaign can run hands-off. The count checker
+   * needs it, but so does the person in the review queue: "the channel had
+   * 12,400 subscribers at launch" is the only thing a screenshot can honestly
+   * be weighed against, and on YouTube it arrives free with the lookup that
+   * resolves the link anyway.
+   */
   baselineFollowers?: number;
   /** Directly-checked platforms: the account we will ask about. */
   targetRef?: string;
+  /** True when what we found is enough to settle the campaign without a person. */
+  auto: boolean;
 }
 
 /**
- * Resolves how a new campaign will be verified, or null when it cannot be —
- * in which case it simply joins the manual review queue rather than failing
- * the buyer's launch. A network hiccup at the wrong moment costs a review, not
- * a campaign.
+ * Work out how a new campaign will be verified and what its target starts at.
+ *
+ * Never throws for a target it simply could not read: an unreadable one joins
+ * the manual review queue rather than failing the buyer's launch, so a network
+ * hiccup at the wrong moment costs a review, not a campaign.
+ *
+ * What can be read without the buyer connecting anything is decided by the
+ * platform, not by us. YouTube publishes a channel's subscriber count to any
+ * API key, so a YouTube campaign is measured from the link alone. Facebook and
+ * Instagram serve a login wall to everything that is not their own app — there
+ * is no public number to take — so those still need a connected page, and a
+ * campaign without one keeps a blank baseline rather than a guessed one.
  */
-async function resolveAutoTarget(
+async function resolveTarget(
   buyerId: string,
   input: CreateCampaignInput,
   autoVerify: boolean,
-): Promise<AutoTarget | null> {
-  if (!autoVerify) return null;
+): Promise<ResolvedTarget> {
+  // What a campaign falls back to: the buyer's own link, reviewed by a person.
+  const manual: ResolvedTarget = { targetUrl: input.targetUrl.trim(), auto: false };
 
   // YouTube is the one platform that answers per worker, so it needs nothing
   // connected: resolve the channel out of the link the buyer pasted and the
-  // subscription check does the rest.
-  if (input.platform === "youtube" && input.type === "subscribe") {
+  // subscription check does the rest. `follow` and `subscribe` are the same
+  // act here, and the checker already settles both.
+  if (input.platform === "youtube") {
+    const direct = input.type === "subscribe" || input.type === "follow";
     try {
       const channel = await resolveChannelId(input.targetUrl);
-      if (!channel) return null;
-      return { targetUrl: channelUrl(channel), targetRef: channel.channelId };
+      if (!channel) return manual;
+      const auto = autoVerify && direct;
+      return {
+        // Only a campaign we are actually measuring gets its link rewritten to
+        // the channel: a like or a comment campaign points at a *video*, and
+        // sending those workers to the channel page instead would be wrong.
+        targetUrl: auto ? channelUrl(channel) : manual.targetUrl,
+        baselineFollowers: channel.subscribers,
+        // Set only when it will be used. `createSubmission` refuses a worker
+        // with no linked YouTube account on any campaign that carries one, and
+        // a manually reviewed campaign has no business demanding that.
+        ...(auto ? { targetRef: channel.channelId } : {}),
+        auto,
+      };
     } catch (e) {
       console.error("[youtube] channel lookup failed:", (e as Error).message);
-      return null;
+      return manual;
     }
   }
 
   // Facebook and Instagram can only be counted, and a count needs an account
   // we hold a token for.
-  if (!input.pageId || input.type !== "follow") return null;
-  if (input.platform !== "facebook" && input.platform !== "instagram") return null;
+  if (!autoVerify) return manual;
+  if (!input.pageId || input.type !== "follow") return manual;
+  if (input.platform !== "facebook" && input.platform !== "instagram") return manual;
 
   const page = await prisma.facebookPage.findUnique({ where: { id: input.pageId } });
   if (!page || page.ownerId !== buyerId) {
@@ -125,10 +161,11 @@ async function resolveAutoTarget(
         targetUrl: instagramUrl(page.instagramUsername ?? page.instagramId),
         pageId: page.id,
         baselineFollowers: baseline,
+        auto: true,
       };
     } catch (e) {
       console.error("[instagram] baseline read failed:", (e as Error).message);
-      return null;
+      return manual;
     }
   }
 
@@ -138,10 +175,15 @@ async function resolveAutoTarget(
       where: { id: page.id },
       data: { followers: baseline, lastCheckedAt: new Date(), lastError: null },
     });
-    return { targetUrl: pageUrl(page), pageId: page.id, baselineFollowers: baseline };
+    return {
+      targetUrl: pageUrl(page),
+      pageId: page.id,
+      baselineFollowers: baseline,
+      auto: true,
+    };
   } catch (e) {
     console.error("[facebook] baseline read failed:", (e as Error).message);
-    return null;
+    return manual;
   }
 }
 
@@ -153,7 +195,7 @@ export async function createCampaign(
   const quantity = Math.max(LIMITS.minCampaignQty, Math.floor(input.quantity));
   if (quantity > LIMITS.maxCampaignQty) throw new DomainError("Quantity too large");
 
-  const auto = await resolveAutoTarget(buyer.id, input, settings.autoVerify);
+  const target = await resolveTarget(buyer.id, input, settings.autoVerify);
 
   // One rate per platform + action, paid by the buyer and earned by the worker.
   const rate = await getRate(input.platform, input.type);
@@ -170,10 +212,11 @@ export async function createCampaign(
         title: input.title.trim() || "Untitled campaign",
         // An auto-verified campaign points at the resolved account itself, so
         // the link workers open always belongs to what is being measured.
-        targetUrl: auto ? auto.targetUrl : input.targetUrl.trim(),
-        pageId: auto?.pageId ?? null,
-        baselineFollowers: auto?.baselineFollowers ?? null,
-        targetRef: auto?.targetRef ?? null,
+        targetUrl: target.targetUrl,
+        pageId: target.pageId ?? null,
+        // Kept even for a campaign going to review — that is who needs it most.
+        baselineFollowers: target.baselineFollowers ?? null,
+        targetRef: target.targetRef ?? null,
         quantity,
         ratePerAction: new Prisma.Decimal(rate),
         workerReward: new Prisma.Decimal(workerReward),
@@ -198,7 +241,7 @@ export async function createCampaign(
   });
 
   // Nothing to review: the platform itself is the reviewer.
-  if (auto) return reviewCampaign(campaign.id, "active");
+  if (target.auto) return reviewCampaign(campaign.id, "active");
   return campaign;
 }
 

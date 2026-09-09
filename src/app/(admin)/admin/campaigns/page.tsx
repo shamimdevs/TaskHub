@@ -15,6 +15,7 @@ import {
   useUpdateCampaignMutation,
 } from "@/redux/features/campaigns/campaignsApi";
 import { formatMoney, formatNumber, pct } from "@/lib/utils";
+import { AUDIENCE_NOUN } from "@/lib/constants";
 
 type Filter = "pending_review" | "active" | "all";
 
@@ -82,6 +83,15 @@ export default function AdminCampaignsPage() {
                       <p className="truncate text-xs text-fg-muted">
                         by {c.buyerName} · {c.targetUrl}
                       </p>
+                      {/* What the target was already sitting at when the
+                          campaign was created. The only number a proof can
+                          honestly be weighed against. */}
+                      {c.baselineFollowers != null && (
+                        <p className="truncate text-xs text-fg-subtle">
+                          Target had {formatNumber(c.baselineFollowers)}{" "}
+                          {AUDIENCE_NOUN[c.platform]} at launch
+                        </p>
+                      )}
                     </div>
                     <CampaignStatusBadge status={c.status} />
                   </div>

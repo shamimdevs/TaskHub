@@ -1,0 +1,29 @@
+-- One worker may work a task once, and the database is what says so.
+--
+-- Until now the rule lived only in `createSubmission`, which looks for an
+-- existing submission and then inserts. Under Postgres' default Read Committed
+-- isolation those two statements are not atomic against a second transaction
+-- doing the same thing: a double-tapped submit button, a second tab, or a
+-- client retry on a slow network can have both requests find nothing and both
+-- insert -- consuming two task slots, incrementing `delivered` twice, and
+-- paying two rewards for one piece of work.
+--
+-- With this index the loser of that race fails on the constraint instead, and
+-- the domain turns it back into the same 409 the sequential path returns.
+--
+-- If this migration fails with a uniqueness error, the table already holds
+-- duplicates from before the constraint existed. Nothing is deleted
+-- automatically, because a duplicate that reached `on_hold` or `approved` has
+-- money posted against it and removing the row would leave the ledger short of
+-- an explanation. Find them with:
+--
+--   SELECT "taskId", "workerId", COUNT(*), array_agg("id"), array_agg("status")
+--   FROM "Submission"
+--   GROUP BY "taskId", "workerId"
+--   HAVING COUNT(*) > 1;
+--
+-- then decide per pair: a spare `pending` row can be deleted (restore the
+-- task's `slotsLeft` and the campaign's `delivered` by the number removed),
+-- while a settled one needs reversing through the review flow first.
+CREATE UNIQUE INDEX "Submission_taskId_workerId_key"
+    ON "Submission"("taskId", "workerId");

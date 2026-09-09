@@ -131,6 +131,9 @@ export function ConnectedAccounts() {
   const setDraft = (key: string, value: string) =>
     setDrafts((d) => ({ ...d, [key]: value }));
 
+  /** Which account's link is open for editing — one at a time. */
+  const [editing, setEditing] = useState<string | null>(null);
+
   const accounts = data?.accounts ?? [];
   const linked = (p: Platform) => accounts.find((a) => a.provider === p);
   const canLink = (p: Platform) => data?.available?.[p] === true;
@@ -140,11 +143,22 @@ export function ConnectedAccounts() {
 
   const saveUrl = async (id: string) => {
     try {
-      await setUrl({ id, profileUrl: draft(id).trim() }).unwrap();
+      const account = await setUrl({ id, profileUrl: draft(id).trim() }).unwrap();
       setDraft(id, "");
-      toast.success("Profile link saved");
-    } catch {
-      toast.error("That does not look like a valid link");
+      setEditing(null);
+      // The server decides what a save costs: filling in a link the platform
+      // withheld keeps the verification, moving one to a different profile
+      // does not. Say which happened rather than always claiming success.
+      toast.success(
+        account.verified
+          ? "Profile link saved"
+          : account.verifyCode
+            ? "Link changed — add the new code to verify it again"
+            : "Link changed — this account needs verifying again",
+      );
+    } catch (e) {
+      const message = (e as { data?: { error?: string } })?.data?.error;
+      toast.error(message ?? "That does not look like a valid link");
     }
   };
 
@@ -351,35 +365,80 @@ export function ConnectedAccounts() {
                         </p>
                       )}
 
-                      {account.profileUrl ? (
-                        <a
-                          href={account.profileUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1.5 truncate text-xs font-medium text-brand hover:underline"
-                        >
-                          <ExternalLink size={12} className="shrink-0" />
-                          {account.profileUrl}
-                        </a>
+                      {account.profileUrl && editing !== account.id ? (
+                        <div className="space-y-1.5">
+                          <a
+                            href={account.profileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 truncate text-xs font-medium text-brand hover:underline"
+                          >
+                            <ExternalLink size={12} className="shrink-0" />
+                            {account.profileUrl}
+                          </a>
+                          <button
+                            onClick={() => {
+                              setDraft(account.id, account.profileUrl!);
+                              setEditing(account.id);
+                            }}
+                            className="text-xs font-semibold text-fg-muted hover:underline"
+                          >
+                            Change link
+                          </button>
+                        </div>
                       ) : (
                         <Field
-                          label="Your profile link"
-                          hint={`${p.label} did not share it, so add it once — every proof will use it from now on.`}
+                          label={
+                            account.profileUrl
+                              ? "Change your profile link"
+                              : "Your profile link"
+                          }
+                          hint={
+                            account.profileUrl
+                              ? "Point it at a different profile and this account starts over as unverified."
+                              : `${p.label} did not share it, so add it once — every proof will use it from now on.`
+                          }
                         >
+                          {/* Moving the link is moving the account. Say so
+                              before the save, not in a toast afterwards. */}
+                          {account.profileUrl && account.verified && (
+                            <Alert tone="warning">
+                              Your proofs are checked against this link, so a
+                              different one has to be verified again —{" "}
+                              {canCodeVerify(p.provider)
+                                ? "you will get a new code to put on the new profile."
+                                : oauth
+                                  ? `you will need to reconnect with ${p.label}.`
+                                  : `${p.label} cannot confirm it here, so it will stay self-declared.`}
+                            </Alert>
+                          )}
                           <Input
                             placeholder={`https://${p.provider}.com/yourprofile`}
                             value={draft(account.id)}
                             onChange={(e) => setDraft(account.id, e.target.value)}
                           />
-                          <Button
-                            size="sm"
-                            className="mt-2"
-                            loading={saving}
-                            disabled={!draft(account.id).trim()}
-                            onClick={() => saveUrl(account.id)}
-                          >
-                            Save link
-                          </Button>
+                          <div className="mt-2 flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              loading={saving}
+                              disabled={!draft(account.id).trim()}
+                              onClick={() => saveUrl(account.id)}
+                            >
+                              Save link
+                            </Button>
+                            {account.profileUrl && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setDraft(account.id, "");
+                                  setEditing(null);
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            )}
+                          </div>
                         </Field>
                       )}
 
@@ -465,6 +524,12 @@ export function ConnectedAccounts() {
               <span className="font-semibold text-fg">Self-declared</span> means
               you told us the handle and nothing has checked it — it still
               reserves the account for you.
+            </p>
+            <p>
+              Because the link is what gets checked, changing it to a different
+              profile sets the account back to unverified and it has to be
+              verified again. Fixing a link the platform never gave us in the
+              first place does not.
             </p>
             {!isLoading && !PROVIDERS.some((p) => canLink(p.provider)) && (
               <Alert tone="info">
