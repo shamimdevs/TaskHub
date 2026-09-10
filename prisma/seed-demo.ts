@@ -36,19 +36,20 @@ interface DemoPerson {
   key: string;
   name: string;
   role: "worker" | "buyer";
+  /** Includes `heldBalance` — held rewards are part of the balance. */
   balance: number;
-  pendingBalance: number;
+  heldBalance: number;
   lifetimeEarned?: number;
   lifetimeSpent?: number;
 }
 
 const PEOPLE: DemoPerson[] = [
-  { key: "rakib", name: "Rakib Hasan", role: "worker", balance: 4.62, pendingBalance: 0.34, lifetimeEarned: 12.9 },
-  { key: "nusrat", name: "Nusrat Jahan", role: "worker", balance: 1.18, pendingBalance: 0.12, lifetimeEarned: 3.4 },
-  { key: "tanvir", name: "Tanvir Ahmed", role: "worker", balance: 0.27, pendingBalance: 0, lifetimeEarned: 0.27 },
-  { key: "shila", name: "Shila Akter", role: "worker", balance: 0, pendingBalance: 0 },
-  { key: "brandhub", name: "BrandHub BD", role: "buyer", balance: 180.5, pendingBalance: 0, lifetimeSpent: 119.5 },
-  { key: "greenleaf", name: "Green Leaf Cafe", role: "buyer", balance: 42.0, pendingBalance: 0, lifetimeSpent: 58.0 },
+  { key: "rakib", name: "Rakib Hasan", role: "worker", balance: 4.96, heldBalance: 0.34, lifetimeEarned: 13.24 },
+  { key: "nusrat", name: "Nusrat Jahan", role: "worker", balance: 1.3, heldBalance: 0.12, lifetimeEarned: 3.52 },
+  { key: "tanvir", name: "Tanvir Ahmed", role: "worker", balance: 0.27, heldBalance: 0, lifetimeEarned: 0.27 },
+  { key: "shila", name: "Shila Akter", role: "worker", balance: 0, heldBalance: 0 },
+  { key: "brandhub", name: "BrandHub BD", role: "buyer", balance: 180.5, heldBalance: 0, lifetimeSpent: 119.5 },
+  { key: "greenleaf", name: "Green Leaf Cafe", role: "buyer", balance: 42.0, heldBalance: 0, lifetimeSpent: 58.0 },
 ];
 
 const email = (key: string) => `${key}@${DOMAIN}`;
@@ -66,7 +67,7 @@ async function seedPeople() {
         roleChosen: true,
         status: "active",
         balance: p.balance,
-        pendingBalance: p.pendingBalance,
+        heldBalance: p.heldBalance,
         lifetimeEarned: p.lifetimeEarned ?? 0,
         lifetimeSpent: p.lifetimeSpent ?? 0,
       },
@@ -80,7 +81,7 @@ async function seedPeople() {
         country: "Bangladesh",
         status: "active",
         balance: p.balance,
-        pendingBalance: p.pendingBalance,
+        heldBalance: p.heldBalance,
         lifetimeEarned: p.lifetimeEarned ?? 0,
         lifetimeSpent: p.lifetimeSpent ?? 0,
         referralCode: `DEMO${p.key.slice(0, 4).toUpperCase()}`,
@@ -374,22 +375,24 @@ async function seedSubmissions(
   const rows: {
     campaignKey: string;
     workerKey: string;
-    status: "pending" | "on_hold" | "approved" | "rejected";
+    status: "pending" | "approved" | "rejected";
+    /** For `approved`: whether the hold has lifted yet. */
+    released?: boolean;
     autoVerified: boolean;
     note?: string;
     daysAgo: number;
   }[] = [
-    // Cleared by the direct YouTube check.
-    { campaignKey: "yt-subs", workerKey: "rakib", status: "on_hold", autoVerified: true, note: "Confirmed on your YouTube subscriptions.", daysAgo: 1 },
+    // Completed by the direct YouTube check; reward in the balance, still held.
+    { campaignKey: "yt-subs", workerKey: "rakib", status: "approved", autoVerified: true, note: "Confirmed on your YouTube subscriptions.", daysAgo: 1 },
     // Waiting: this worker has no usable token, so the checker defers to a
     // human rather than refusing something it could not see.
     { campaignKey: "yt-subs", workerKey: "tanvir", status: "pending", autoVerified: false, daysAgo: 0.05 },
     // Refused, and the reason is specific because the check was direct.
     { campaignKey: "yt-subs", workerKey: "shila", status: "rejected", autoVerified: true, note: "Your YouTube account is not subscribed to this channel.", daysAgo: 2 },
-    // Released — the hold elapsed and the money moved to spendable.
-    { campaignKey: "yt-subs", workerKey: "nusrat", status: "approved", autoVerified: true, note: "Confirmed on your YouTube subscriptions.", daysAgo: 8 },
+    // Released — the hold elapsed and the reward became withdrawable.
+    { campaignKey: "yt-subs", workerKey: "nusrat", status: "approved", released: true, autoVerified: true, note: "Confirmed on your YouTube subscriptions.", daysAgo: 8 },
     // Count-checked side.
-    { campaignKey: "fb-follow", workerKey: "rakib", status: "on_hold", autoVerified: true, note: "Confirmed by follower count.", daysAgo: 1 },
+    { campaignKey: "fb-follow", workerKey: "rakib", status: "approved", autoVerified: true, note: "Confirmed by follower count.", daysAgo: 1 },
     { campaignKey: "fb-follow", workerKey: "nusrat", status: "pending", autoVerified: false, daysAgo: 0.02 },
   ];
 
@@ -420,6 +423,7 @@ async function seedSubmissions(
       proofUrl: `https://www.youtube.com/@${r.workerKey}`,
       submittedAt: ago(r.daysAgo),
       holdUntil: ahead(3 - r.daysAgo),
+      releasedAt: r.released ? ahead(3 - r.daysAgo) : null,
       reviewedAt: r.status === "pending" ? null : ago(r.daysAgo),
       reviewerNote: r.note ?? null,
       autoVerified: r.autoVerified,

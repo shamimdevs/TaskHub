@@ -79,8 +79,9 @@ export const createSubmissionSchema = z.object({
   screenshotUrl: z.string().trim().url().max(500).optional(),
 });
 
+/** Approval is automatic only; a person can refuse or claw back, never clear. */
 export const reviewSubmissionSchema = z.object({
-  action: z.enum(["approve", "reject", "penalize"]),
+  action: z.enum(["reject", "penalize"]),
   note: z.string().trim().max(400).optional(),
 });
 

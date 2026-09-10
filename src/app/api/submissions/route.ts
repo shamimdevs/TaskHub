@@ -7,7 +7,6 @@ import { DomainError } from "@/lib/domain/errors";
 
 const STATUSES: SubmissionStatus[] = [
   "pending",
-  "on_hold",
   "approved",
   "rejected",
   "reversed",

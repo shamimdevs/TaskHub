@@ -13,7 +13,7 @@ export function toUser(u: PrismaUser): User {
     avatarUrl: u.image ?? undefined,
     country: u.country,
     balance: u.balance.toNumber(),
-    pendingBalance: u.pendingBalance.toNumber(),
+    heldBalance: u.heldBalance.toNumber(),
     lifetimeEarned: u.lifetimeEarned.toNumber(),
     lifetimeSpent: u.lifetimeSpent.toNumber(),
     status: u.status,

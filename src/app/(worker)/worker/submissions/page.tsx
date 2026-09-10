@@ -64,7 +64,7 @@ export default function SubmissionsPage() {
   const earned = useMemo(
     () =>
       list
-        .filter((s) => s.status === "approved" || s.status === "on_hold")
+        .filter((s) => s.status === "approved")
         .reduce((n, s) => n + s.reward, 0),
     [list],
   );
@@ -180,8 +180,7 @@ export default function SubmissionsPage() {
         items={[
           { value: "all", label: "All", count: scoped.length },
           { value: "pending", label: "Pending", count: counts.pending ?? 0 },
-          { value: "on_hold", label: "On hold", count: counts.on_hold ?? 0 },
-          { value: "approved", label: "Approved", count: counts.approved ?? 0 },
+          { value: "approved", label: "Complete", count: counts.approved ?? 0 },
           { value: "rejected", label: "Rejected", count: counts.rejected ?? 0 },
         ]}
       />
@@ -201,7 +200,7 @@ export default function SubmissionsPage() {
             <p className="text-xs text-fg-muted">
               Showing {(current - 1) * PAGE_SIZE + 1}–
               {(current - 1) * PAGE_SIZE + visible.length} of {list.length}
-              {earned > 0 && ` · ${formatMoney(earned)} earned or on hold`}
+              {earned > 0 && ` · ${formatMoney(earned)} earned`}
             </p>
 
             <div className="grid gap-3 sm:grid-cols-2">

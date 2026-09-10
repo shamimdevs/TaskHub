@@ -79,7 +79,7 @@ export default function AdminUserDetail({
                 <CardHeader title="Wallet" />
                 <CardBody className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <Stat label="Balance" value={formatMoney(u.balance)} />
-                  <Stat label="Pending" value={formatMoney(u.pendingBalance)} />
+                  <Stat label="On hold" value={formatMoney(u.heldBalance)} />
                   <Stat label="Earned" value={formatMoney(u.lifetimeEarned ?? 0)} />
                   <Stat label="Spent" value={formatMoney(u.lifetimeSpent ?? 0)} />
                 </CardBody>

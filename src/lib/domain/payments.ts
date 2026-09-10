@@ -4,7 +4,7 @@ import type { PaymentMethod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { formatBdt, formatMoney } from "@/lib/utils";
 import { getSettings } from "./settings";
-import { postTransaction } from "./wallet";
+import { postTransaction, withdrawable } from "./wallet";
 import { notify, notifyAdmins } from "./notifications";
 import { DomainError } from "./errors";
 
@@ -161,6 +161,23 @@ export async function createWithdrawal(
   const payoutBdt = net.times(usdRate).toDecimalPlaces(2);
 
   const withdrawal = await prisma.$transaction(async (tx) => {
+    // Held rewards are in the balance but not ours to pay out yet.
+    const user = await tx.user.findUnique({
+      where: { id: worker.id },
+      select: { balance: true, heldBalance: true },
+    });
+    if (!user) throw new DomainError("User not found", 404);
+    const free = withdrawable(user);
+    if (amount.gt(free)) {
+      throw new DomainError(
+        user.heldBalance.gt(0)
+          ? `You can withdraw up to ${formatMoney(free.toNumber())} — ${formatMoney(
+              user.heldBalance.toNumber(),
+            )} of your balance is still on hold`
+          : "Insufficient balance",
+      );
+    }
+
     const withdrawal = await tx.withdrawal.create({
       data: {
         workerId: worker.id,

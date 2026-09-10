@@ -4,7 +4,7 @@ import type { User, WalletTransaction } from "@/types";
 export interface WalletResponse {
   user: Pick<
     User,
-    "id" | "name" | "role" | "balance" | "pendingBalance" | "lifetimeEarned" | "lifetimeSpent"
+    "id" | "name" | "role" | "balance" | "heldBalance" | "lifetimeEarned" | "lifetimeSpent"
   >;
   transactions: WalletTransaction[];
 }

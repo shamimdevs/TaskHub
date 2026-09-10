@@ -15,7 +15,7 @@ export async function GET(req: Request) {
       name: true,
       role: true,
       balance: true,
-      pendingBalance: true,
+      heldBalance: true,
       lifetimeEarned: true,
       lifetimeSpent: true,
     },

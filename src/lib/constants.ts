@@ -195,8 +195,7 @@ export const SUBMISSION_STATUS: Record<
   { label: string; tone: Tone }
 > = {
   pending: { label: "Pending", tone: "warning" },
-  on_hold: { label: "On hold", tone: "info" },
-  approved: { label: "Approved", tone: "success" },
+  approved: { label: "Complete", tone: "success" },
   rejected: { label: "Rejected", tone: "danger" },
   reversed: { label: "Reversed", tone: "danger" },
 };

@@ -61,9 +61,9 @@ export const t = {
   worker: {
     dashboard: "Dashboard",
     availableBalance: "Available balance",
-    pendingEarnings: "Pending (on hold)",
+    pendingEarnings: "On hold",
     todayEarnings: "Earned today",
-    tasksDone: "Tasks approved",
+    tasksDone: "Tasks completed",
     streak: "Day streak",
     startEarning: "Start earning",
     recommendedTasks: "Recommended for you",
@@ -75,8 +75,8 @@ export const t = {
     proofNote: "Note for the reviewer (optional)",
     screenshot: "Screenshot upload",
     holdNotice:
-      "Reward is held for {days} days for verification. Unfollowing before then reverses the reward and may ban your account.",
-    submissionSent: "Proof submitted — it's now pending review.",
+      "Once verified, the reward is added to your balance right away but stays on hold for {days} days before it can be withdrawn. Unfollowing before then reverses the reward and may ban your account.",
+    submissionSent: "Proof submitted — it's being verified automatically.",
     withdrawTitle: "Withdraw earnings",
     withdrawMethod: "Withdraw to",
     accountNumber: "Account number",

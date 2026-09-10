@@ -39,12 +39,15 @@ export default function WithdrawPage() {
   const minWithdraw = settings?.minWithdraw ?? LIMITS.minWithdraw;
   const usdRate = settings?.usdRate ?? USD_RATE;
 
+  // Held rewards count in the balance but cannot leave it until they clear.
   const balance = wallet.data?.user.balance ?? 0;
+  const held = wallet.data?.user.heldBalance ?? 0;
+  const available = Math.max(0, +(balance - held).toFixed(2));
   const amt = Number(amount) || 0;
   const fee = +((amt * feePct) / 100).toFixed(2);
   const net = +(amt - fee).toFixed(2);
   const tooLow = amt > 0 && amt < minWithdraw;
-  const tooHigh = amt > balance;
+  const tooHigh = amt > available;
 
   const submit = async () => {
     if (!account.trim() || tooLow || tooHigh || amt <= 0) {
@@ -112,7 +115,9 @@ export default function WithdrawPage() {
                 tooLow
                   ? `Minimum is ${formatMoney(minWithdraw)}`
                   : tooHigh
-                    ? "More than your available balance"
+                    ? held > 0
+                      ? `You can withdraw up to ${formatMoney(available)} — ${formatMoney(held)} is on hold`
+                      : "More than your available balance"
                     : undefined
               }
             >
@@ -127,6 +132,10 @@ export default function WithdrawPage() {
             </Field>
 
             <div className="rounded-lg bg-bg-subtle p-3 text-sm">
+              <Row label="Balance" value={formatMoney(balance)} />
+              {held > 0 && <Row label="On hold" value={`− ${formatMoney(held)}`} />}
+              <Row label="Withdrawable" value={formatMoney(available)} strong />
+              <div className="my-2 border-t border-border" />
               <Row label={t.worker.amount} value={formatMoney(amt)} />
               <Row
                 label={fill(t.worker.feeLine, { pct: feePct })}

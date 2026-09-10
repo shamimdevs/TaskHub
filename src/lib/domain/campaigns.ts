@@ -13,7 +13,7 @@ import { channelUrl, resolveChannelId } from "@/lib/youtube";
 import { formatMoney, formatNumber } from "@/lib/utils";
 import { getSettings, getRate } from "./settings";
 import { postTransaction } from "./wallet";
-import { notify, notifyAdmins } from "./notifications";
+import { notify } from "./notifications";
 import { DomainError } from "./errors";
 
 const VERB: Record<TaskType, string> = {
@@ -242,28 +242,35 @@ export async function createCampaign(
     return campaign;
   });
 
-  // Nothing to review: the platform itself is the reviewer.
-  if (target.auto) return reviewCampaign(campaign.id, "active");
-
-  await notifyAdmins({
-    kind: "warning",
-    title: "Campaign waiting for review",
-    body: `${buyer.name} · ${formatNumber(quantity)} × ${input.type} on ${
-      input.platform
-    } · ${formatMoney(totalCost.toNumber())}`,
-    href: "/admin/campaigns",
-    invalidate: ["Campaign", "Kpi"],
-  });
-  return campaign;
+  // Campaigns are never reviewed by hand: admins only handle deposits and
+  // withdrawals. Every funded campaign goes live at once; `target.auto` only
+  // decides whether its submissions are settled by the platform checker.
+  return reviewCampaign(campaign.id, "active");
 }
 
-/** Admin campaign state transitions. `target` is the desired CampaignStatus. */
-export async function reviewCampaign(id: string, target: CampaignStatus) {
+/**
+ * Campaign state transitions. `target` is the desired CampaignStatus.
+ *
+ * `allowedFrom` limits which statuses the move may start from. It is checked
+ * here, inside the transaction, rather than by the caller: a check made before
+ * the transaction could pass on a status an admin changes a moment later.
+ */
+export async function reviewCampaign(
+  id: string,
+  target: CampaignStatus,
+  opts: { allowedFrom?: CampaignStatus[]; ownerId?: string } = {},
+) {
   const campaign = await prisma.$transaction(async (tx) => {
     const campaign = await tx.campaign.findUnique({ where: { id } });
     if (!campaign) throw new DomainError("Campaign not found", 404);
+    if (opts.ownerId && campaign.buyerId !== opts.ownerId) {
+      throw new DomainError("Forbidden", 403);
+    }
 
     const from = campaign.status;
+    if (opts.allowedFrom && !opts.allowedFrom.includes(from)) {
+      throw new DomainError(`A ${from.replace("_", " ")} campaign cannot be ${target}`, 409);
+    }
     const remaining = Math.max(0, campaign.quantity - campaign.delivered);
 
     if (target === "active" && (from === "pending_review" || from === "paused")) {

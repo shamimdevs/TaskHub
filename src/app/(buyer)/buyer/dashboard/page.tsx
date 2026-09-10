@@ -20,7 +20,8 @@ export default function BuyerDashboard() {
   const list = campaigns.data ?? [];
   const active = list.filter((c) => c.status === "active");
   const delivered = list.reduce((s, c) => s + c.delivered, 0);
-  const inReview = list.filter((c) => c.status === "pending_review").length;
+  // Campaigns go live on their own, so there is no review count to show.
+  const paused = list.filter((c) => c.status === "paused").length;
 
   return (
     <>
@@ -58,10 +59,10 @@ export default function BuyerDashboard() {
           tone="brand"
         />
         <StatCard
-          label={t.buyer.inReview}
-          value={inReview}
+          label="Paused"
+          value={paused}
           tone="warning"
-          hint="Awaiting approval"
+          hint="Resume anytime"
         />
       </div>
 

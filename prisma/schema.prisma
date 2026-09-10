@@ -57,9 +57,11 @@ enum CampaignStatus {
   cancelled
 }
 
+/// `approved` is what the worker sees as "Complete": verified automatically,
+/// reward already in their balance. Whether that reward can be withdrawn yet is
+/// a separate question — see `Submission.releasedAt`.
 enum SubmissionStatus {
   pending
-  on_hold
   approved
   rejected
   reversed
@@ -153,7 +155,9 @@ model User {
   status         UserStatus @default(active)
   banReason      String?
   balance        Decimal    @default(0) @db.Decimal(14, 2)
-  pendingBalance Decimal    @default(0) @db.Decimal(14, 2)
+  /// The part of `balance` still inside a reward hold. It is counted in the
+  /// balance, but a withdrawal can only take `balance - heldBalance`.
+  heldBalance    Decimal    @default(0) @db.Decimal(14, 2)
   lifetimeEarned Decimal    @default(0) @db.Decimal(14, 2)
   lifetimeSpent  Decimal    @default(0) @db.Decimal(14, 2)
   referralCode   String     @unique
@@ -313,7 +317,11 @@ model Submission {
   proofNote     String?
   screenshotUrl String?
   submittedAt   DateTime         @default(now())
+  /// When the reward stops being held and becomes withdrawable.
   holdUntil     DateTime
+  /// Set once the hold has elapsed and the reward left `heldBalance`. Null on
+  /// an approved submission means its reward is still on hold.
+  releasedAt    DateTime?
   reviewedAt    DateTime?
   reviewerNote  String?
   reviewedById  String?

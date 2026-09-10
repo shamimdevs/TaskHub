@@ -22,12 +22,13 @@ export const submissionsApi = baseApi.injectEndpoints({
     }),
     reviewSubmission: build.mutation<
       Submission,
-      { id: string; action: "approve" | "reject" | "penalize"; note?: string }
+      { id: string; action: "reject" | "penalize"; note?: string }
     >({
       query: ({ id, ...body }) => ({ url: `/submissions/${id}`, method: "PATCH", body }),
       invalidatesTags: [
         { type: "Submission", id: "LIST" },
         { type: "Kpi", id: "ADMIN" },
+        { type: "Wallet", id: "ME" },
       ],
     }),
   }),

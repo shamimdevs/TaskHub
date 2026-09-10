@@ -32,9 +32,9 @@ export type CampaignStatus =
   | "rejected"
   | "cancelled";
 
+/** `approved` is shown as "Complete" — see `Submission.releasedAt` for the hold. */
 export type SubmissionStatus =
   | "pending"
-  | "on_hold"
   | "approved"
   | "rejected"
   | "reversed";
@@ -64,7 +64,8 @@ export interface User {
   avatarUrl?: string;
   country: string;
   balance: number;
-  pendingBalance: number;
+  /** Part of `balance` still on hold — shown in the balance, not withdrawable. */
+  heldBalance: number;
   lifetimeEarned?: number;
   lifetimeSpent?: number;
   status: "active" | "banned" | "restricted";
@@ -142,7 +143,10 @@ export interface Submission {
   proofNote?: string;
   screenshotUrl?: string;
   submittedAt: string;
+  /** When the reward becomes withdrawable. */
   holdUntil: string;
+  /** Set once the hold has lifted; null on a complete submission still on hold. */
+  releasedAt?: string | null;
   reviewedAt?: string;
   reviewerNote?: string;
   /** Cleared by the follower-count checker rather than a person. */

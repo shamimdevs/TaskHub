@@ -29,11 +29,19 @@ export default function WorkerWalletPage() {
         {(w) => (
           <>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <StatCard label="Available" value={formatMoney(w.user.balance)} icon={TrendingUp} />
+              <StatCard
+                label="Balance"
+                value={formatMoney(w.user.balance)}
+                icon={TrendingUp}
+                hint={`${formatMoney(
+                  Math.max(0, w.user.balance - w.user.heldBalance),
+                )} withdrawable`}
+              />
               <StatCard
                 label="On hold"
-                value={formatMoney(w.user.pendingBalance)}
+                value={formatMoney(w.user.heldBalance)}
                 tone="warning"
+                hint="In your balance, not withdrawable yet"
               />
               <StatCard
                 label="Lifetime earned"

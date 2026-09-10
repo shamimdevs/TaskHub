@@ -47,7 +47,7 @@ export async function GET(req: Request) {
     prisma.user.count({ where: { role: "buyer", status: "active" } }),
     prisma.deposit.count({ where: { status: "pending" } }),
     prisma.withdrawal.count({ where: { status: "pending" } }),
-    prisma.submission.count({ where: { status: "on_hold" } }),
+    prisma.submission.count({ where: { status: "approved", releasedAt: null } }),
     prisma.campaign.count({ where: { status: "pending_review" } }),
     prisma.$queryRaw<{ month: Date; commission: Prisma.Decimal; payout: Prisma.Decimal }[]>`
       SELECT date_trunc('month', "createdAt") AS month,

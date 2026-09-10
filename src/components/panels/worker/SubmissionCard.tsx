@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/Card";
 import { PlatformChip, SubmissionStatusBadge } from "@/components/ui/StatusBadge";
 
 export function SubmissionCard({ sub }: { sub: Submission }) {
-  const onHold = sub.status === "on_hold";
+  // Complete, reward in the balance, but not withdrawable until the hold ends.
+  const onHold = sub.status === "approved" && !sub.releasedAt;
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between gap-3">
@@ -25,7 +26,7 @@ export function SubmissionCard({ sub }: { sub: Submission }) {
 
       {onHold && (
         <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-info-soft px-2 py-1 text-[11px] font-medium text-info">
-          <CalendarClock size={12} /> Releases {formatDate(sub.holdUntil)}
+          <CalendarClock size={12} /> On hold · withdrawable {formatDate(sub.holdUntil)}
         </p>
       )}
       {sub.status === "rejected" && sub.reviewerNote && (

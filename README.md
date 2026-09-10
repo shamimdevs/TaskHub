@@ -343,8 +343,16 @@ like. Add `YOUTUBE_API_KEY` and re-link to see checks actually succeed.
 
 ## Reward holds
 
-Approved task rewards sit in `pendingBalance` until their hold window elapses, then
-move to spendable `balance`. Release runs opportunistically on wallet/submission
+Task submissions are never approved by hand. The automatic checker verifies
+them, and a verified submission is marked `approved` (shown as **Complete**)
+straight away, with its reward credited to the worker's main `balance`.
+
+The reward is still held for the task's hold window: it counts in `balance`
+and is also tracked in `heldBalance`, and a withdrawal can only take
+`balance - heldBalance`. When the hold elapses the submission's `releasedAt` is
+set and the amount leaves `heldBalance`, so it becomes withdrawable. If the
+action is undone during the hold, the reward is debited back out. Admins can
+only reject or penalize. Release runs opportunistically on wallet/submission
 reads, and on demand:
 
 ```bash

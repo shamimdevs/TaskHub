@@ -17,8 +17,11 @@ interface PostArgs {
   amount: number | Prisma.Decimal;
   description: string;
   reference?: string;
-  /** Credit into the held `pendingBalance` instead of the spendable `balance`. */
-  pending?: boolean;
+  /**
+   * Credit into `balance` as usual, but also mark it as held: it counts in the
+   * balance and cannot be withdrawn until `releaseHeldReward` lets it go.
+   */
+  held?: boolean;
 }
 
 /**
@@ -34,36 +37,17 @@ export async function postTransaction({
   amount,
   description,
   reference,
-  pending = false,
+  held = false,
 }: PostArgs) {
   const amt = new Prisma.Decimal(amount);
   if (amt.lte(0)) throw new DomainError("Amount must be positive");
+  if (held && direction !== "credit") throw new DomainError("Only credits can be held");
 
   const user = await tx.user.findUnique({
     where: { id: userId },
-    select: { balance: true, pendingBalance: true },
+    select: { balance: true },
   });
   if (!user) throw new DomainError("User not found", 404);
-
-  if (pending) {
-    if (direction !== "credit") throw new DomainError("Pending transactions must be credits");
-    await tx.user.update({
-      where: { id: userId },
-      data: { pendingBalance: { increment: amt } },
-    });
-    return tx.walletTransaction.create({
-      data: {
-        userId,
-        type,
-        direction,
-        amount: amt,
-        balanceAfter: user.balance,
-        status: "pending",
-        reference,
-        description,
-      },
-    });
-  }
 
   const delta = direction === "credit" ? amt : amt.negated();
   const balanceAfter = user.balance.plus(delta);
@@ -76,6 +60,7 @@ export async function postTransaction({
   if (direction === "debit" && SPEND_TYPES.includes(type)) {
     data.lifetimeSpent = { increment: amt };
   }
+  if (held) data.heldBalance = { increment: amt };
   await tx.user.update({ where: { id: userId }, data });
 
   return tx.walletTransaction.create({
@@ -93,47 +78,37 @@ export async function postTransaction({
 }
 
 /**
- * Moves a previously-held reward from `pendingBalance` to spendable `balance`
- * and settles its ledger row. Used when a submission's hold period elapses.
+ * Lifts the hold on a reward that is already in the balance, so it becomes
+ * withdrawable. Moves no money: only `heldBalance` shrinks. Used when a hold
+ * elapses, and when a held reward is reversed (the debit is posted separately).
  */
-export async function settlePendingReward({
+export async function releaseHeldReward({
   tx,
   userId,
-  reference,
   amount,
-  description,
 }: {
   tx: Tx;
   userId: string;
-  reference: string;
   amount: number | Prisma.Decimal;
-  description: string;
 }) {
-  const amt = new Prisma.Decimal(amount);
   const user = await tx.user.findUnique({
     where: { id: userId },
-    select: { balance: true, pendingBalance: true },
+    select: { heldBalance: true },
   });
   if (!user) throw new DomainError("User not found", 404);
 
-  const newPending = Prisma.Decimal.max(new Prisma.Decimal(0), user.pendingBalance.minus(amt));
-  const balanceAfter = user.balance.plus(amt);
+  // Floored at zero: the column is 2dp while rewards are 4dp, so rounding can
+  // leave it a cent adrift, and it must never lock more than is really held.
+  const heldBalance = Prisma.Decimal.max(
+    new Prisma.Decimal(0),
+    user.heldBalance.minus(amount),
+  );
+  await tx.user.update({ where: { id: userId }, data: { heldBalance } });
+}
 
-  await tx.user.update({
-    where: { id: userId },
-    data: {
-      pendingBalance: newPending,
-      balance: balanceAfter,
-      lifetimeEarned: { increment: amt },
-    },
-  });
-
-  await tx.walletTransaction.updateMany({
-    where: { userId, reference, type: "task_reward", status: "pending" },
-    data: { status: "completed", balanceAfter, description },
-  });
-
-  return balanceAfter;
+/** What a withdrawal may take: the balance minus whatever is still on hold. */
+export function withdrawable(user: { balance: Prisma.Decimal; heldBalance: Prisma.Decimal }) {
+  return Prisma.Decimal.max(new Prisma.Decimal(0), user.balance.minus(user.heldBalance));
 }
 
 /** Convenience wrapper that opens its own transaction. */

@@ -15,32 +15,28 @@ import {
   useReviewSubmissionMutation,
 } from "@/redux/features/submissions/submissionsApi";
 import { formatMoney, formatDate } from "@/lib/utils";
-import type { SubmissionStatus } from "@/types";
+import type { Submission } from "@/types";
 
-type Filter = "on_hold" | "pending" | "all";
+type Filter = "pending" | "held" | "all";
+
+/** Complete, but the reward is still inside its hold window. */
+const isHeld = (s: Submission) => s.status === "approved" && !s.releasedAt;
 
 export default function AdminSubmissionsPage() {
-  const [filter, setFilter] = useState<Filter>("on_hold");
+  const [filter, setFilter] = useState<Filter>("pending");
   const query = useGetSubmissionsQuery({ status: "all" });
   const [review, { isLoading }] = useReviewSubmissionMutation();
   const toast = useToast();
 
-  const list = (query.data ?? []).filter((s) =>
-    filter === "all" ? true : s.status === filter,
-  );
-  const count = (s: SubmissionStatus) =>
-    (query.data ?? []).filter((x) => x.status === s).length;
+  const all = query.data ?? [];
+  const pending = all.filter((s) => s.status === "pending");
+  const held = all.filter(isHeld);
+  const list = filter === "pending" ? pending : filter === "held" ? held : all;
 
-  const act = async (id: string, action: "approve" | "reject" | "penalize") => {
+  const act = async (id: string, action: "reject" | "penalize") => {
     try {
       await review({ id, action }).unwrap();
-      toast.success(
-        action === "approve"
-          ? "Reward released"
-          : action === "penalize"
-            ? "Penalized & reversed"
-            : "Rejected",
-      );
+      toast.success(action === "penalize" ? "Penalized & reversed" : "Rejected");
     } catch {
       toast.error("Action failed");
     }
@@ -50,7 +46,7 @@ export default function AdminSubmissionsPage() {
     <>
       <PageHeader
         title="Verification queue"
-        description="Approve rewards after the hold period, or penalize fake proofs"
+        description="Submissions are verified and completed automatically. Reject or penalize fake proofs here."
       />
 
       <Tabs<Filter>
@@ -58,9 +54,9 @@ export default function AdminSubmissionsPage() {
         value={filter}
         onChange={setFilter}
         items={[
-          { value: "on_hold", label: "On hold", count: count("on_hold") },
-          { value: "pending", label: "Pending", count: count("pending") },
-          { value: "all", label: "All", count: query.data?.length },
+          { value: "pending", label: "Pending", count: pending.length },
+          { value: "held", label: "On hold", count: held.length },
+          { value: "all", label: "All", count: all.length },
         ]}
       />
 
@@ -109,12 +105,15 @@ export default function AdminSubmissionsPage() {
                     </p>
                   )}
 
-                  {(s.status === "on_hold" || s.status === "pending") && (
+                  {(s.status === "pending" || isHeld(s)) && (
                     <ReviewButtons
                       loading={isLoading}
-                      approveLabel="Release reward"
-                      onApprove={() => act(s.id, "approve")}
                       onReject={() => act(s.id, "reject")}
+                    />
+                  )}
+                  {s.status === "approved" && (
+                    <ReviewButtons
+                      loading={isLoading}
                       onPenalize={() => act(s.id, "penalize")}
                     />
                   )}

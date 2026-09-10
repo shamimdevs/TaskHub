@@ -126,7 +126,8 @@ async function settleDirectCampaign(
     prisma.submission.findMany({
       where: {
         campaignId,
-        status: "on_hold",
+        status: "approved",
+        releasedAt: null,
         // Anything cleared moments ago was just confirmed; leave it be.
         OR: [
           { reviewedAt: null },
@@ -296,11 +297,13 @@ export async function settleCampaign(
       select: { id: true, submittedAt: true },
     }),
     prisma.submission.findMany({
-      where: { campaignId, status: "on_hold" },
+      where: { campaignId, status: "approved", releasedAt: null },
       orderBy: { submittedAt: "desc" },
       select: { id: true },
     }),
-    prisma.submission.count({ where: { campaignId, status: "approved" } }),
+    prisma.submission.count({
+      where: { campaignId, status: "approved", releasedAt: { not: null } },
+    }),
   ]);
 
   let cleared = held.length + releasedCount;
@@ -355,7 +358,7 @@ async function completeIfDelivered(
 ) {
   if (status !== "active") return;
   const settled = await prisma.submission.count({
-    where: { campaignId, status: { in: ["on_hold", "approved"] } },
+    where: { campaignId, status: "approved" },
   });
   if (settled >= quantity) {
     await prisma.campaign.update({

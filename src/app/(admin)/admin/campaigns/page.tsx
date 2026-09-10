@@ -27,17 +27,20 @@ type StatusFilter = CampaignStatus | "all";
 
 const PAGE_SIZE = 10;
 
-/** Status tabs, in the order an admin works through them. */
+/**
+ * Status tabs. Campaigns go live on their own, so `pending_review` only holds
+ * campaigns created before that — kept last so they can still be published.
+ */
 const STATUS_TABS: CampaignStatus[] = [
-  "pending_review",
   "active",
   "paused",
   "completed",
   "rejected",
+  "pending_review",
 ];
 
 export default function AdminCampaignsPage() {
-  const [status, setStatus] = useState<StatusFilter>("pending_review");
+  const [status, setStatus] = useState<StatusFilter>("active");
   const [platform, setPlatform] = useState<Platform | "all">("all");
   const [type, setType] = useState<TaskType | "all">("all");
   const [search, setSearch] = useState("");
@@ -93,7 +96,7 @@ export default function AdminCampaignsPage() {
   };
 
   const resetAll = () => {
-    setStatus("pending_review");
+    setStatus("active");
     setPlatform("all");
     setType("all");
     setSearch("");

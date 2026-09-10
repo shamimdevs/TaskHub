@@ -1,8 +1,8 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { formatMoney } from "@/lib/utils";
-import { postTransaction, settlePendingReward } from "./wallet";
+import { formatDate, formatMoney } from "@/lib/utils";
+import { postTransaction, releaseHeldReward } from "./wallet";
 import { maybeQualifyReferral } from "./referrals";
 import { notify } from "./notifications";
 import { DomainError } from "./errors";
@@ -106,8 +106,13 @@ type ReviewAction = "approve" | "reject" | "penalize";
 
 /**
  * Clear, refuse or claw back one submission. `reviewerId` is null when the
- * follower-count checker did it rather than a person — those are flagged
- * `autoVerified` so the UI can say so.
+ * automatic checker did it rather than a person — those are flagged
+ * `autoVerified` so the UI can say so. Only the checker approves; the admin
+ * route accepts `reject` and `penalize` alone.
+ *
+ * Approving completes the submission and credits the reward straight into the
+ * worker's balance, held until `holdUntil`: it shows in the balance but a
+ * withdrawal cannot take it until `releaseDueRewards` lifts the hold.
  */
 export async function reviewSubmission(
   reviewerId: string | null,
@@ -131,36 +136,45 @@ export async function reviewSubmission(
         type: "task_reward",
         direction: "credit",
         amount: sub.reward,
-        description: `Reward held — ${sub.title}`,
+        description: `Task reward — ${sub.title}`,
         reference: sub.id,
-        pending: true,
+        held: true,
       });
       return tx.submission.update({
         where: { id },
         data: {
-          status: "on_hold",
+          status: "approved",
           reviewedAt: now,
           reviewedById: reviewerId,
           autoVerified,
           reviewerNote: trimmedNote,
           holdUntil: new Date(now.getTime() + sub.task.holdDays * 86_400_000),
+          releasedAt: null,
         },
       });
     }
 
     if (action === "reject") {
-      if (sub.status === "approved" || sub.status === "reversed") {
+      if (sub.status === "rejected" || sub.status === "reversed") {
         throw new DomainError("This submission was already settled");
       }
-      if (sub.status === "on_hold") {
-        // undo the held credit
+      if (sub.status === "approved") {
+        // Past the hold the delivery is final; only a penalty can claw it back.
+        if (sub.releasedAt) throw new DomainError("This reward has already cleared — penalize instead");
+        // Still held: take the reward back out of the balance it went into.
+        await postTransaction({
+          tx,
+          userId: sub.workerId,
+          type: "adjustment",
+          direction: "debit",
+          amount: sub.reward,
+          description: `Reward reversed — ${sub.title}`,
+          reference: sub.id,
+        });
+        await releaseHeldReward({ tx, userId: sub.workerId, amount: sub.reward });
         await tx.user.update({
           where: { id: sub.workerId },
-          data: { pendingBalance: { decrement: sub.reward } },
-        });
-        await tx.walletTransaction.updateMany({
-          where: { userId: sub.workerId, reference: sub.id, type: "task_reward", status: "pending" },
-          data: { status: "reversed" },
+          data: { lifetimeEarned: { decrement: sub.reward } },
         });
       }
       // free the slot back onto the task
@@ -181,9 +195,9 @@ export async function reviewSubmission(
       });
     }
 
-    // penalize — claw back an already-released reward
+    // penalize — claw back a completed submission's reward
     if (sub.status !== "approved") {
-      throw new DomainError("Only approved submissions can be penalised");
+      throw new DomainError("Only completed submissions can be penalised");
     }
     await postTransaction({
       tx,
@@ -194,6 +208,10 @@ export async function reviewSubmission(
       description: `Penalty — reward reversed for "${sub.title}"`,
       reference: sub.id,
     });
+    // A reward penalised while still held must not keep locking the balance.
+    if (!sub.releasedAt) {
+      await releaseHeldReward({ tx, userId: sub.workerId, amount: sub.reward });
+    }
     return tx.submission.update({
       where: { id },
       data: {
@@ -208,12 +226,10 @@ export async function reviewSubmission(
 
   // Whichever branch ran, the worker hears about it once, after the commit.
   const said = {
-    on_hold: {
+    approved: {
       kind: "success" as const,
-      title: "Proof accepted",
-      body: `${formatMoney(submission.reward.toNumber())} is on hold and clears once the ${
-        submission.holdUntil ? "hold window" : "review"
-      } is over.`,
+      title: "Task complete",
+      body: `${formatMoney(submission.reward.toNumber())} was added to your balance. It is on hold and can be withdrawn from ${formatDate(submission.holdUntil)}.`,
     },
     rejected: {
       kind: "danger" as const,
@@ -226,7 +242,6 @@ export async function reviewSubmission(
       body: submission.reviewerNote || "The engagement was undone after the reward cleared.",
     },
     pending: null,
-    approved: null,
   }[submission.status];
 
   if (said) {
@@ -241,13 +256,14 @@ export async function reviewSubmission(
 }
 
 /**
- * Settles every submission whose hold window has elapsed: moves the reward from
- * pending to spendable balance and qualifies any pending referral.
- * Safe to call opportunistically on reads and from the cron endpoint.
+ * Lifts the hold on every completed submission whose hold window has elapsed:
+ * the reward, already in the balance, becomes withdrawable, and any pending
+ * referral qualifies. Safe to call opportunistically on reads and from the
+ * cron endpoint.
  */
 export async function releaseDueRewards(): Promise<number> {
   const due = await prisma.submission.findMany({
-    where: { status: "on_hold", holdUntil: { lte: new Date() } },
+    where: { status: "approved", releasedAt: null, holdUntil: { lte: new Date() } },
     select: { id: true, workerId: true, reward: true, title: true },
     take: 500,
   });
@@ -255,16 +271,13 @@ export async function releaseDueRewards(): Promise<number> {
   const settled: typeof due = [];
   for (const s of due) {
     await prisma.$transaction(async (tx) => {
-      const fresh = await tx.submission.findUnique({ where: { id: s.id }, select: { status: true } });
-      if (fresh?.status !== "on_hold") return;
-      await settlePendingReward({
-        tx,
-        userId: s.workerId,
-        reference: s.id,
-        amount: s.reward,
-        description: `Reward released — ${s.title}`,
+      const fresh = await tx.submission.findUnique({
+        where: { id: s.id },
+        select: { status: true, releasedAt: true },
       });
-      await tx.submission.update({ where: { id: s.id }, data: { status: "approved" } });
+      if (fresh?.status !== "approved" || fresh.releasedAt) return;
+      await releaseHeldReward({ tx, userId: s.workerId, amount: s.reward });
+      await tx.submission.update({ where: { id: s.id }, data: { releasedAt: new Date() } });
       await maybeQualifyReferral(tx, s.workerId);
       released++;
       settled.push(s);
@@ -276,8 +289,8 @@ export async function releaseDueRewards(): Promise<number> {
     await notify({
       userId: s.workerId,
       kind: "success",
-      title: "Reward released",
-      body: `${formatMoney(s.reward.toNumber())} for "${s.title}" is now spendable.`,
+      title: "Reward cleared",
+      body: `${formatMoney(s.reward.toNumber())} for "${s.title}" is off hold and can be withdrawn.`,
       href: "/worker/wallet",
       invalidate: ["Wallet", "Submission"],
     });

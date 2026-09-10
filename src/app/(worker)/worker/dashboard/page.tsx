@@ -25,8 +25,10 @@ export default function WorkerDashboard() {
   const tasks = useGetTasksQuery();
   const subs = useGetSubmissionsQuery();
 
-  const approved = subs.data?.filter((s) => s.status === "approved").length ?? 0;
-  const onHold = subs.data?.filter((s) => s.status === "on_hold").length ?? 0;
+  const completed = subs.data?.filter((s) => s.status === "approved") ?? [];
+  const onHold = completed.filter((s) => !s.releasedAt).length;
+  const balance = wallet.data?.user.balance ?? 0;
+  const held = wallet.data?.user.heldBalance ?? 0;
   const earnedToday = 6.15;
 
   const week = [
@@ -53,17 +55,17 @@ export default function WorkerDashboard() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
-          label="Available balance"
-          value={formatMoney(wallet.data?.user.balance ?? 0)}
+          label="Balance"
+          value={formatMoney(balance)}
           icon={Wallet}
-          hint="Ready to withdraw"
+          hint={`${formatMoney(Math.max(0, balance - held))} ready to withdraw`}
         />
         <StatCard
           label="On hold"
-          value={formatMoney(wallet.data?.user.pendingBalance ?? 0)}
+          value={formatMoney(held)}
           icon={CalendarClock}
           tone="warning"
-          hint={`${onHold} in verification`}
+          hint={`${onHold} ${onHold === 1 ? "reward" : "rewards"} clearing`}
         />
         <StatCard
           label="Earned today"
@@ -73,8 +75,8 @@ export default function WorkerDashboard() {
           hint="Keep the streak going"
         />
         <StatCard
-          label="Tasks approved"
-          value={approved}
+          label="Tasks completed"
+          value={completed.length}
           icon={BadgeCheck}
           tone="brand"
           hint="All time"
