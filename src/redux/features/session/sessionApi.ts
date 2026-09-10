@@ -5,6 +5,8 @@ export type Me = User & {
   emailVerified: boolean;
   /** false for accounts that only ever signed in with Google */
   hasPassword: boolean;
+  /** false when the server has no ImageKit credentials configured */
+  canUploadImages: boolean;
 };
 
 export const sessionApi = baseApi.injectEndpoints({

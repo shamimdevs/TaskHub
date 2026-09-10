@@ -46,9 +46,9 @@ export async function getSettings() {
 }
 
 /**
- * Fills in any (platform, action) pair the code offers but the database has no
- * row for yet — on a fresh install, and again whenever a new pair is added to
- * `RATE_CARD`. Existing rows are never touched, so admin edits survive.
+ * Reconciles the stored rate card with the pairs the code offers: missing ones
+ * are created, retired ones are dropped. Prices that are still offered are
+ * never touched, so admin edits survive.
  */
 async function ensureRateCard() {
   const have = await prisma.rateCard.count();
@@ -60,6 +60,18 @@ async function ensureRateCard() {
       rate: new Prisma.Decimal(e.rate),
     })),
     skipDuplicates: true,
+  });
+  // Actions pulled from `RATE_CARD` leave rows behind; without this the admin
+  // rate card would keep listing prices nothing can be bought at any more.
+  await prisma.rateCard.deleteMany({
+    where: {
+      NOT: {
+        OR: RATE_CARD_ENTRIES.map((e) => ({
+          platform: e.platform,
+          type: e.type,
+        })),
+      },
+    },
   });
 }
 

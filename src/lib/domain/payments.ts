@@ -2,8 +2,10 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import type { PaymentMethod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { formatBdt, formatMoney } from "@/lib/utils";
 import { getSettings } from "./settings";
 import { postTransaction } from "./wallet";
+import { notify, notifyAdmins } from "./notifications";
 import { DomainError } from "./errors";
 
 /* ----------------------------- deposits ---------------------------- */
@@ -36,7 +38,7 @@ export async function createDeposit(
     );
   }
 
-  return prisma.$transaction(async (tx) => {
+  const deposit = await prisma.$transaction(async (tx) => {
     const deposit = await tx.deposit.create({
       data: {
         buyerId: buyer.id,
@@ -64,6 +66,32 @@ export async function createDeposit(
     }
     return deposit;
   });
+
+  // Told after the commit, never inside it: a notification must not be able to
+  // roll the money back, and a rolled-back deposit must never be announced.
+  if (deposit.status === "approved") {
+    await notify({
+      userId: buyer.id,
+      kind: "success",
+      title: "Deposit credited",
+      body: `${formatBdt(deposit.amountBdt.toNumber())} added — ${formatMoney(
+        deposit.amount.toNumber(),
+      )} is in your wallet.`,
+      href: "/buyer/wallet",
+      invalidate: ["Wallet", "Deposit"],
+    });
+  } else {
+    await notifyAdmins({
+      kind: "warning",
+      title: "Deposit waiting for review",
+      body: `${buyer.name} sent ${formatBdt(
+        deposit.amountBdt.toNumber(),
+      )} · TrxID ${deposit.trxId}`,
+      href: "/admin/deposits",
+      invalidate: ["Deposit", "Kpi"],
+    });
+  }
+  return deposit;
 }
 
 export async function reviewDeposit(
@@ -72,7 +100,7 @@ export async function reviewDeposit(
   action: "approve" | "reject",
   note?: string,
 ) {
-  return prisma.$transaction(async (tx) => {
+  const deposit = await prisma.$transaction(async (tx) => {
     const deposit = await tx.deposit.findUnique({ where: { id } });
     if (!deposit) throw new DomainError("Deposit not found", 404);
     if (deposit.status !== "pending") throw new DomainError("Deposit already reviewed");
@@ -98,6 +126,21 @@ export async function reviewDeposit(
       },
     });
   });
+
+  const approved = deposit.status === "approved";
+  await notify({
+    userId: deposit.buyerId,
+    kind: approved ? "success" : "danger",
+    title: approved ? "Deposit approved" : "Deposit rejected",
+    body: approved
+      ? `${formatBdt(deposit.amountBdt.toNumber())} credited — ${formatMoney(
+          deposit.amount.toNumber(),
+        )} is in your wallet.`
+      : deposit.note || "That TrxID could not be verified.",
+    href: "/buyer/wallet",
+    invalidate: ["Wallet", "Deposit", "Kpi"],
+  });
+  return deposit;
 }
 
 /* --------------------------- withdrawals -------------------------- */
@@ -117,7 +160,7 @@ export async function createWithdrawal(
   const usdRate = new Prisma.Decimal(settings.usdRate);
   const payoutBdt = net.times(usdRate).toDecimalPlaces(2);
 
-  return prisma.$transaction(async (tx) => {
+  const withdrawal = await prisma.$transaction(async (tx) => {
     const withdrawal = await tx.withdrawal.create({
       data: {
         workerId: worker.id,
@@ -155,6 +198,17 @@ export async function createWithdrawal(
     }
     return withdrawal;
   });
+
+  await notifyAdmins({
+    kind: "warning",
+    title: "Withdrawal requested",
+    body: `${worker.name} wants ${formatMoney(
+      withdrawal.amount.toNumber(),
+    )} to ${withdrawal.method} ${withdrawal.accountNumber}`,
+    href: "/admin/withdrawals",
+    invalidate: ["Withdrawal", "Kpi"],
+  });
+  return withdrawal;
 }
 
 export async function reviewWithdrawal(
@@ -163,7 +217,7 @@ export async function reviewWithdrawal(
   action: "approve" | "reject" | "markPaid",
   note?: string,
 ) {
-  return prisma.$transaction(async (tx) => {
+  const withdrawal = await prisma.$transaction(async (tx) => {
     const w = await tx.withdrawal.findUnique({ where: { id } });
     if (!w) throw new DomainError("Withdrawal not found", 404);
 
@@ -206,4 +260,36 @@ export async function reviewWithdrawal(
       },
     });
   });
+
+  const payout = `${formatMoney(withdrawal.net.toNumber())} (${formatBdt(
+    withdrawal.payoutBdt.toNumber(),
+  )})`;
+  const said = {
+    approved: {
+      kind: "info" as const,
+      title: "Withdrawal approved",
+      body: `${payout} is being sent to your ${withdrawal.method} account.`,
+    },
+    paid: {
+      kind: "success" as const,
+      title: "Withdrawal paid",
+      body: `${payout} sent to ${withdrawal.method} ${withdrawal.accountNumber}.`,
+    },
+    rejected: {
+      kind: "danger" as const,
+      title: "Withdrawal rejected",
+      body: withdrawal.note || "Your balance has been refunded.",
+    },
+    pending: null,
+  }[withdrawal.status];
+
+  if (said) {
+    await notify({
+      userId: withdrawal.workerId,
+      ...said,
+      href: "/worker/wallet",
+      invalidate: ["Wallet", "Withdrawal", "Kpi"],
+    });
+  }
+  return withdrawal;
 }

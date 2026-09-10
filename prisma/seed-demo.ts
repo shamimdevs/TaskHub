@@ -224,7 +224,7 @@ interface DemoCampaign {
   key: string;
   buyerKey: string;
   platform: "youtube" | "facebook" | "instagram";
-  type: "subscribe" | "follow" | "like";
+  type: "subscribe" | "follow" | "watch_time";
   title: string;
   targetUrl: string;
   targetRef?: string;
@@ -278,15 +278,16 @@ const CAMPAIGNS: DemoCampaign[] = [
     status: "pending_review",
   },
   {
-    key: "fb-like",
-    buyerKey: "greenleaf",
-    platform: "facebook",
-    type: "like",
-    title: "Likes on our iftar post",
-    targetUrl: "https://www.facebook.com/greenleafcafebd/posts/1",
-    quantity: 100,
-    delivered: 100,
-    rate: 0.005,
+    key: "yt-watch",
+    buyerKey: "brandhub",
+    platform: "youtube",
+    type: "watch_time",
+    // Quantity is minutes watched — watch time is priced by the minute.
+    title: "Watch time on our launch video",
+    targetUrl: "https://www.youtube.com/watch?v=demoBrandHub01",
+    quantity: 6000,
+    delivered: 6000,
+    rate: 0.0015,
     status: "completed",
   },
 ];
@@ -343,7 +344,11 @@ async function seedCampaigns(users: Map<string, string>) {
         instructions: [
           "Open the link in your browser or app",
           "Log in with your real, active account",
-          c.type === "subscribe" ? "Subscribe to the channel" : "Follow the page",
+          c.type === "subscribe"
+            ? "Subscribe to the channel"
+            : c.type === "watch_time"
+              ? "Keep watching for the minutes the campaign asks for"
+              : "Follow the page",
           "Come back and submit — we check it automatically",
         ],
         reward: c.rate,

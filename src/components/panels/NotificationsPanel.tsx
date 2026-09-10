@@ -1,16 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
-import { Bell, CheckCheck, Info, TriangleAlert, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bell, BellRing, CheckCheck, Info, TriangleAlert, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Card } from "@/components/ui/Card";
 import { QueryBoundary } from "@/components/ui/QueryBoundary";
 import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
 import {
   useGetNotificationsQuery,
   useMarkNotificationsReadMutation,
 } from "@/redux/features/notifications/notificationsApi";
+import { enablePush, pushConfigured } from "@/lib/firebase-client";
 import { relativeTime, cn } from "@/lib/utils";
 
 const ICON = {
@@ -30,6 +32,31 @@ const TONE = {
 export function NotificationsPanel() {
   const query = useGetNotificationsQuery();
   const [markRead] = useMarkNotificationsReadMutation();
+  const toast = useToast();
+  const [pushBusy, setPushBusy] = useState(false);
+
+  /**
+   * Asking is the only way to know where this browser stands — reading
+   * Notification.permission during render would differ between the server and
+   * the client. Re-registering an already-allowed device is a no-op.
+   */
+  const turnOnPush = async () => {
+    setPushBusy(true);
+    try {
+      const result = await enablePush();
+      if (result === "enabled") {
+        toast.success("Push is on", "This device will get alerts with the app closed.");
+      } else if (result === "denied") {
+        toast.error("Blocked", "Allow notifications for this site in your browser settings.");
+      } else {
+        toast.info("Not available", "This browser cannot receive push notifications.");
+      }
+    } catch {
+      toast.error("Could not turn on push");
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   useEffect(() => {
     // mark read shortly after viewing
@@ -49,6 +76,27 @@ export function NotificationsPanel() {
           </Button>
         }
       />
+
+      {pushConfigured && (
+        <Card className="mb-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-fg">Push notifications</p>
+            <p className="text-xs text-fg-muted">
+              Get approvals, rewards and payouts on this device even when TaskHub
+              is closed.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            icon={BellRing}
+            loading={pushBusy}
+            onClick={turnOnPush}
+            className="shrink-0"
+          >
+            Turn on
+          </Button>
+        </Card>
+      )}
 
       <QueryBoundary
         query={query}
@@ -96,7 +144,7 @@ export function NotificationsPanel() {
         )}
       </QueryBoundary>
       <p className="mt-3 flex items-center gap-1.5 text-xs text-fg-subtle">
-        <Bell size={12} /> Push notifications arrive here and on your device (PWA).
+        <Bell size={12} /> Alerts land here live, and on your device once push is on.
       </p>
     </>
   );

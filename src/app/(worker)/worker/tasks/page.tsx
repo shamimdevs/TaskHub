@@ -7,7 +7,12 @@ import { QueryBoundary } from "@/components/ui/QueryBoundary";
 import { Select } from "@/components/ui/Input";
 import { TaskCard } from "@/components/panels/worker/TaskCard";
 import { useGetTasksQuery } from "@/redux/features/tasks/tasksApi";
-import { PLATFORMS, TASK_TYPES } from "@/lib/constants";
+import {
+  OFFERED_PLATFORMS,
+  OFFERED_TASK_TYPES,
+  PLATFORMS,
+  TASK_TYPES,
+} from "@/lib/constants";
 
 export default function AvailableTasksPage() {
   const [platform, setPlatform] = useState("all");
@@ -24,17 +29,17 @@ export default function AvailableTasksPage() {
       <div className="mb-4 grid grid-cols-2 gap-2 sm:max-w-md">
         <Select value={platform} onChange={(e) => setPlatform(e.target.value)}>
           <option value="all">All platforms</option>
-          {Object.entries(PLATFORMS).map(([k, v]) => (
+          {OFFERED_PLATFORMS.map((k) => (
             <option key={k} value={k}>
-              {v.label}
+              {PLATFORMS[k].label}
             </option>
           ))}
         </Select>
         <Select value={type} onChange={(e) => setType(e.target.value)}>
           <option value="all">All actions</option>
-          {Object.entries(TASK_TYPES).map(([k, v]) => (
+          {OFFERED_TASK_TYPES.map((k) => (
             <option key={k} value={k}>
-              {v.label}
+              {TASK_TYPES[k].label}
             </option>
           ))}
         </Select>

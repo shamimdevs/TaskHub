@@ -10,8 +10,10 @@ import {
   pageUrl,
 } from "@/lib/facebook";
 import { channelUrl, resolveChannelId } from "@/lib/youtube";
+import { formatMoney, formatNumber } from "@/lib/utils";
 import { getSettings, getRate } from "./settings";
 import { postTransaction } from "./wallet";
+import { notify, notifyAdmins } from "./notifications";
 import { DomainError } from "./errors";
 
 const VERB: Record<TaskType, string> = {
@@ -22,7 +24,7 @@ const VERB: Record<TaskType, string> = {
   share: "Share the post",
   join_group: "Join the group",
   view: "Watch the video on",
-  watch_time: "Watch at least an hour of",
+  watch_time: "Watch the required number of minutes of",
 };
 
 function buildInstructions(type: TaskType): string[] {
@@ -242,12 +244,22 @@ export async function createCampaign(
 
   // Nothing to review: the platform itself is the reviewer.
   if (target.auto) return reviewCampaign(campaign.id, "active");
+
+  await notifyAdmins({
+    kind: "warning",
+    title: "Campaign waiting for review",
+    body: `${buyer.name} · ${formatNumber(quantity)} × ${input.type} on ${
+      input.platform
+    } · ${formatMoney(totalCost.toNumber())}`,
+    href: "/admin/campaigns",
+    invalidate: ["Campaign", "Kpi"],
+  });
   return campaign;
 }
 
 /** Admin campaign state transitions. `target` is the desired CampaignStatus. */
 export async function reviewCampaign(id: string, target: CampaignStatus) {
-  return prisma.$transaction(async (tx) => {
+  const campaign = await prisma.$transaction(async (tx) => {
     const campaign = await tx.campaign.findUnique({ where: { id } });
     if (!campaign) throw new DomainError("Campaign not found", 404);
 
@@ -306,4 +318,42 @@ export async function reviewCampaign(id: string, target: CampaignStatus) {
 
     return tx.campaign.update({ where: { id }, data: { status: target } });
   });
+
+  const said = {
+    active: {
+      kind: "success" as const,
+      title: "Campaign is live",
+      body: `"${campaign.title}" is now in front of workers.`,
+    },
+    rejected: {
+      kind: "danger" as const,
+      title: "Campaign rejected",
+      body: `"${campaign.title}" was turned down — ${formatMoney(
+        campaign.totalCost.toNumber(),
+      )} refunded to your wallet.`,
+    },
+    completed: {
+      kind: "success" as const,
+      title: "Campaign completed",
+      body: `"${campaign.title}" delivered all ${formatNumber(campaign.quantity)}.`,
+    },
+    cancelled: {
+      kind: "info" as const,
+      title: "Campaign cancelled",
+      body: `"${campaign.title}" was stopped and the undelivered part refunded.`,
+    },
+    paused: null,
+    draft: null,
+    pending_review: null,
+  }[campaign.status];
+
+  if (said) {
+    await notify({
+      userId: campaign.buyerId,
+      ...said,
+      href: `/buyer/campaigns/${campaign.id}`,
+      invalidate: ["Campaign", "Wallet", "Task"],
+    });
+  }
+  return campaign;
 }

@@ -1,15 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, Lock, Mail, Phone, User } from "lucide-react";
+import { useForm, useWatch, type Resolver } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { ArrowRight, Lock, Mail, User } from "lucide-react";
 import { Field } from "@/components/ui/Field";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Alert } from "@/components/ui/Misc";
 import { authClient } from "@/lib/auth-client";
+import { authSchema, type AuthValues } from "@/lib/forms";
 import { roleHome } from "@/lib/roles";
 import { t } from "@/lib/i18n/en";
 
@@ -20,63 +23,89 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const params = useSearchParams();
   const nextUrl = params.get("next");
 
-  const [role, setRole] = useState<SignupRole>("worker");
-  const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  // Login and register share one value shape; only the rules differ, so the
+  // resolver is the thing that changes with the mode.
+  const resolver = useMemo(
+    () => zodResolver(authSchema(mode)) as Resolver<AuthValues>,
+    [mode],
+  );
+
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    setError: setFieldError,
+    control,
+    formState: { errors, isSubmitting },
+  } = useForm<AuthValues>({
+    resolver,
+    // Nag only after someone has left a field, then correct them as they fix it.
+    mode: "onTouched",
+    defaultValues: {
+      email: "",
+      password: "",
+      name: "",
+      role: "worker",
+      referral: params.get("ref") ?? "",
+    },
+  });
+
+  // useWatch rather than watch(): it subscribes to this one field instead of
+  // re-rendering the form on every keystroke.
+  const role = (useWatch({ control, name: "role" }) ?? "worker") as SignupRole;
+
+  const onSubmit = handleSubmit(async (values) => {
     setError(null);
-    const fd = new FormData(e.currentTarget);
-    const email = String(fd.get("email") || "").trim();
-    const password = String(fd.get("password") || "");
-    setLoading(true);
 
-    try {
-      if (mode === "register") {
-        const { error } = await authClient.signUp.email({
-          email,
-          password,
-          name: String(fd.get("name") || "").trim(),
-          // additional fields (declared in src/lib/auth.ts)
-          role,
-          phone: String(fd.get("phone") || "").trim() || undefined,
-          referredByCode: String(fd.get("referral") || "").trim() || undefined,
-          callbackURL: nextUrl ?? roleHome(role),
-        } as Parameters<typeof authClient.signUp.email>[0]);
-
-        if (error) {
-          setError(error.message ?? "Could not create your account.");
-          return;
-        }
-        router.push(`/verify-email?email=${encodeURIComponent(email)}`);
-        return;
-      }
-
-      const { data, error } = await authClient.signIn.email({
-        email,
-        password,
-        rememberMe: true,
-        callbackURL: nextUrl ?? undefined,
-      });
+    if (mode === "register") {
+      const { error } = await authClient.signUp.email({
+        email: values.email,
+        password: values.password,
+        name: values.name!,
+        // additional fields (declared in src/lib/auth.ts)
+        role,
+        referredByCode: values.referral || undefined,
+        callbackURL: nextUrl ?? roleHome(role),
+      } as Parameters<typeof authClient.signUp.email>[0]);
 
       if (error) {
-        if (error.code === "EMAIL_NOT_VERIFIED") {
-          router.push(`/verify-email?email=${encodeURIComponent(email)}`);
+        // Point at the field when the server knows which one is at fault.
+        if (error.code === "USER_ALREADY_EXISTS") {
+          setFieldError("email", {
+            message: "That email already has an account.",
+          });
           return;
         }
-        setError(error.message ?? "Invalid email or password.");
+        setError(error.message ?? "Could not create your account.");
         return;
       }
-
-      const userRole = (data?.user as { role?: string } | undefined)?.role;
-      router.push(nextUrl ?? roleHome(userRole));
-      router.refresh();
-    } finally {
-      setLoading(false);
+      router.push(`/verify-email?email=${encodeURIComponent(values.email)}`);
+      return;
     }
-  }
+
+    const { data, error } = await authClient.signIn.email({
+      email: values.email,
+      password: values.password,
+      rememberMe: true,
+      callbackURL: nextUrl ?? undefined,
+    });
+
+    if (error) {
+      if (error.code === "EMAIL_NOT_VERIFIED") {
+        router.push(`/verify-email?email=${encodeURIComponent(values.email)}`);
+        return;
+      }
+      setError(error.message ?? "Invalid email or password.");
+      return;
+    }
+
+    const userRole = (data?.user as { role?: string } | undefined)?.role;
+    router.push(nextUrl ?? roleHome(userRole));
+    router.refresh();
+  });
 
   async function onGoogle() {
     setError(null);
@@ -117,7 +146,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
       <button
         type="button"
         onClick={onGoogle}
-        disabled={googleLoading || loading}
+        disabled={googleLoading || isSubmitting}
         className="mt-5 flex w-full items-center justify-center gap-2.5 rounded-lg border border-border-strong bg-card px-4 py-2.5 text-sm font-semibold text-fg transition-colors hover:bg-bg-subtle disabled:opacity-60"
       >
         <GoogleGlyph />
@@ -130,12 +159,13 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         <span className="h-px flex-1 bg-border" />
       </div>
 
+      {/* noValidate: the schema owns the messages, not the browser. */}
       <form onSubmit={onSubmit} className="space-y-4" noValidate>
         {mode === "register" && (
-          <Field label={t.auth.iWantTo}>
+          <Field label={t.auth.iWantTo} error={errors.role?.message}>
             <SegmentedControl<SignupRole>
               value={role}
-              onChange={setRole}
+              onChange={(v) => setValue("role", v, { shouldValidate: true })}
               segments={[
                 { value: "worker", label: t.auth.roleWorker, hint: t.auth.roleWorkerHint },
                 { value: "buyer", label: t.auth.roleBuyer, hint: t.auth.roleBuyerHint },
@@ -145,55 +175,52 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         )}
 
         {mode === "register" && (
-          <Field label={t.auth.name} required>
+          <Field label={t.auth.name} required error={errors.name?.message}>
             <Input
               icon={User}
-              name="name"
               autoComplete="name"
               placeholder="Rakib Hasan"
-              required
-              minLength={2}
+              invalid={Boolean(errors.name)}
+              {...register("name")}
             />
           </Field>
         )}
 
-        <Field label={t.auth.email} required>
+        <Field label={t.auth.email} required error={errors.email?.message}>
           <Input
             icon={Mail}
-            name="email"
             type="email"
             autoComplete="email"
             inputMode="email"
             placeholder="you@gmail.com"
-            required
+            invalid={Boolean(errors.email)}
+            {...register("email")}
           />
         </Field>
-
-        
 
         <Field
           label={t.auth.password}
           required
+          error={errors.password?.message}
           hint={mode === "login" ? undefined : "At least 8 characters"}
         >
           <Input
             icon={Lock}
-            name="password"
             type="password"
             autoComplete={mode === "login" ? "current-password" : "new-password"}
             placeholder="••••••••"
-            required
-            minLength={8}
+            invalid={Boolean(errors.password)}
+            {...register("password")}
           />
         </Field>
 
         {mode === "register" && (
-          <Field label={t.auth.referral}>
+          <Field label={t.auth.referral} error={errors.referral?.message}>
             <Input
-              name="referral"
               autoCapitalize="characters"
               placeholder="RAKIB123"
-              defaultValue={params.get("ref") ?? undefined}
+              invalid={Boolean(errors.referral)}
+              {...register("referral")}
             />
           </Field>
         )}
@@ -209,7 +236,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           </div>
         )}
 
-        <Button type="submit" fullWidth size="lg" loading={loading} iconRight={ArrowRight}>
+        <Button type="submit" fullWidth size="lg" loading={isSubmitting} iconRight={ArrowRight}>
           {mode === "login" ? t.auth.signIn : t.auth.signUp}
         </Button>
       </form>

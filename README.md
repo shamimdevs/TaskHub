@@ -5,7 +5,8 @@ real human engagement, admins run the platform.
 
 Stack: **Next.js 16 (App Router)** · **PostgreSQL + Prisma** · **Better Auth**
 (email/password + email verification + Google OAuth) · **Redux Toolkit / RTK Query** ·
-**Tailwind v4** · **Resend** for transactional email.
+**Tailwind v4** · **Resend** for transactional email · **Socket.IO** for live
+updates · **Firebase Cloud Messaging** for device push.
 
 ## Local setup
 
@@ -63,6 +64,15 @@ upserts and never touches settings the admin has since edited.
 npm run dev
 ```
 
+That boots `server.ts`, not `next dev` — one HTTP server carrying both Next and
+Socket.IO, which is what lets a route handler push straight to the browser.
+`npm run dev:next` still starts plain Next if you want it, but notifications
+then only appear on a refresh.
+
+```bash
+npm run build && npm start     # production, same custom server
+```
+
 ## Auth flows
 
 Verification and password reset run on **6-digit codes**, not links (Better Auth's
@@ -94,6 +104,51 @@ endpoint cannot be used to change sides or self-promote to admin.
 Route protection: `src/proxy.ts` does optimistic cookie redirects; the
 `(worker|buyer|admin)` layouts do the authoritative `requireRole` check; API route
 handlers call `requireApiUser` / `requireApiRole`.
+
+## Notifications
+
+Three channels, one call. `notify()` in `src/lib/domain/notifications.ts` writes
+the `Notification` row (the bell list), emits it over Socket.IO (the open tab
+toasts and refetches) and sends it to Firebase (the phone, app closed). It is
+called **after** the transaction commits, never inside it, and it never throws:
+a deposit is approved whether or not the notification lands.
+
+Wired to: deposit submitted / approved / rejected, withdrawal requested /
+approved / paid / rejected, submission accepted / rejected / reversed, reward
+released after the hold, campaign submitted / live / rejected / completed.
+Buyer- and worker-facing events go to the person; the queue events go to every
+admin (`notifyAdmins`, socket only — no phone buzz per deposit).
+
+- **Realtime** — `server.ts` attaches Socket.IO to the same server as Next and
+  parks the instance on `globalThis`; `src/lib/realtime.ts` is how the app
+  reaches it, and every emit is a no-op when there is no server (scripts,
+  `next dev`). The handshake reads the Better Auth session cookie, looks the
+  session up in the database and drops the socket into `user:<id>` and
+  `role:<role>` rooms. `RealtimeBridge` (mounted by `AppShell`) holds the
+  browser end and invalidates exactly the RTK Query tags the server flagged.
+- **Push** — off until the `FIREBASE_*` and `NEXT_PUBLIC_FIREBASE_*` values are
+  filled in; see `.env.example`. Workers opt in per device from the
+  Notifications page; tokens live in `PushToken` and dead ones are pruned the
+  first time FCM rejects them. Background messages are handled by
+  `public/firebase-messaging-sw.js`.
+- **Health check** — `GET /api/realtime/status` (admin) reports whether the
+  socket server is attached, how many clients are connected, and whether push
+  is configured.
+
+## Profile photos and passwords
+
+Avatars go to **ImageKit**. The browser asks `GET /api/uploads/imagekit`
+(session required) for a five-minute signature, uploads the file straight to
+ImageKit under `/taskhub/avatars/<user id>`, and only the returned URL is saved
+on the account — no key of any kind reaches the browser and no image passes
+through this app. Leave the `IMAGEKIT_*` values empty and `/api/session` reports
+`canUploadImages: false`, so the upload button simply does not appear.
+
+An account that signed up with Google has no password. It can add one from
+Profile -> **Set a password** (`POST /api/session/password`, which wraps Better
+Auth's `setPassword`), after which email sign-in works too and the card turns
+into the usual change-password form. An account that already has a password is
+refused by that route: changing one always needs the current one.
 
 ## Money and rates
 

@@ -85,6 +85,16 @@ export function formatDate(input: string | Date): string {
   });
 }
 
+/**
+ * Local calendar day as YYYY-MM-DD — the format `<input type="date">` speaks.
+ * Slicing an ISO string would use UTC instead, which puts an evening action in
+ * Dhaka on the previous day.
+ */
+export function dayKey(input: string | Date): string {
+  const d = typeof input === "string" ? new Date(input) : input;
+  return d.toLocaleDateString("en-CA");
+}
+
 export function formatDateTime(input: string | Date): string {
   const d = typeof input === "string" ? new Date(input) : input;
   return d.toLocaleString("en-GB", {

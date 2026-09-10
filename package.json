@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node --env-file-if-exists=.env --import tsx server.ts --dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node --env-file-if-exists=.env --import tsx server.ts",
     "lint": "eslint",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -13,21 +13,29 @@
     "db:seed": "prisma db seed",
     "db:seed:demo": "tsx prisma/seed-demo.ts",
     "db:studio": "prisma studio",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "dev:next": "next dev"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.9.1",
     "@prisma/client": "^6.19.3",
     "@reduxjs/toolkit": "^2.12.0",
     "better-auth": "^1.7.2",
+    "firebase": "^12.18.0",
+    "firebase-admin": "^14.3.0",
     "lucide-react": "^1.38.0",
     "next": "16.3.3",
     "nodemailer": "^9.1.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "react-hook-form": "^7.87.0",
     "react-redux": "^9.3.0",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
+    "tsx": "^4.23.13",
     "zod": "^4.5.4"
   },
   "devDependencies": {
@@ -40,7 +48,6 @@
     "eslint-config-next": "16.3.3",
     "prisma": "^6.19.3",
     "tailwindcss": "^4",
-    "tsx": "^4.23.13",
     "typescript": "^5"
   }
 }

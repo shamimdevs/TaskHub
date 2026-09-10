@@ -1,8 +1,10 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { formatMoney } from "@/lib/utils";
 import { postTransaction, settlePendingReward } from "./wallet";
 import { maybeQualifyReferral } from "./referrals";
+import { notify } from "./notifications";
 import { DomainError } from "./errors";
 
 /** What a worker is told when they try to take the same task twice. */
@@ -114,7 +116,7 @@ export async function reviewSubmission(
   note?: string,
 ) {
   const autoVerified = reviewerId === null;
-  return prisma.$transaction(async (tx) => {
+  const submission = await prisma.$transaction(async (tx) => {
     const sub = await tx.submission.findUnique({ where: { id }, include: { task: true } });
     if (!sub) throw new DomainError("Submission not found", 404);
 
@@ -203,6 +205,39 @@ export async function reviewSubmission(
       },
     });
   });
+
+  // Whichever branch ran, the worker hears about it once, after the commit.
+  const said = {
+    on_hold: {
+      kind: "success" as const,
+      title: "Proof accepted",
+      body: `${formatMoney(submission.reward.toNumber())} is on hold and clears once the ${
+        submission.holdUntil ? "hold window" : "review"
+      } is over.`,
+    },
+    rejected: {
+      kind: "danger" as const,
+      title: "Submission rejected",
+      body: submission.reviewerNote || "Your proof did not meet the requirements.",
+    },
+    reversed: {
+      kind: "danger" as const,
+      title: "Reward reversed",
+      body: submission.reviewerNote || "The engagement was undone after the reward cleared.",
+    },
+    pending: null,
+    approved: null,
+  }[submission.status];
+
+  if (said) {
+    await notify({
+      userId: submission.workerId,
+      ...said,
+      href: "/worker/submissions",
+      invalidate: ["Submission", "Wallet", "Task"],
+    });
+  }
+  return submission;
 }
 
 /**
@@ -217,6 +252,7 @@ export async function releaseDueRewards(): Promise<number> {
     take: 500,
   });
   let released = 0;
+  const settled: typeof due = [];
   for (const s of due) {
     await prisma.$transaction(async (tx) => {
       const fresh = await tx.submission.findUnique({ where: { id: s.id }, select: { status: true } });
@@ -231,6 +267,19 @@ export async function releaseDueRewards(): Promise<number> {
       await tx.submission.update({ where: { id: s.id }, data: { status: "approved" } });
       await maybeQualifyReferral(tx, s.workerId);
       released++;
+      settled.push(s);
+    });
+  }
+
+  // The hold is the part workers actually wait on, so this one is worth a push.
+  for (const s of settled) {
+    await notify({
+      userId: s.workerId,
+      kind: "success",
+      title: "Reward released",
+      body: `${formatMoney(s.reward.toNumber())} for "${s.title}" is now spendable.`,
+      href: "/worker/wallet",
+      invalidate: ["Wallet", "Submission"],
     });
   }
   return released;

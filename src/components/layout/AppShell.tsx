@@ -10,16 +10,23 @@ import type { Role } from "@/types";
 import { APP_NAME } from "@/lib/constants";
 import { Drawer } from "@/components/ui/Drawer";
 import { IconButton } from "@/components/ui/IconButton";
+import { RealtimeBridge } from "@/components/providers/RealtimeBridge";
 import { SidebarNav } from "./SidebarNav";
 import { BottomNav } from "./BottomNav";
 import { Topbar } from "./Topbar";
 import { RoleSwitcher } from "./RoleSwitcher";
 
-function Brand({ role }: { role: Role }) {
+/** Brand block; doubles as the way back to the public site (`/`). */
+function Brand({ role, onNavigate }: { role: Role; onNavigate?: () => void }) {
   const meta = ROLE_META[role];
   const Icon = meta.icon;
   return (
-    <div className="flex items-center gap-2.5 px-1">
+    <Link
+      href="/"
+      onClick={onNavigate}
+      title={`Go to ${APP_NAME} home`}
+      className="flex items-center gap-2.5 rounded-lg px-1 py-1 transition-colors hover:bg-bg-subtle"
+    >
       <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand text-brand-fg">
         <Icon size={18} />
       </span>
@@ -27,7 +34,7 @@ function Brand({ role }: { role: Role }) {
         <p className="text-sm font-bold text-fg">{APP_NAME}</p>
         <p className="text-[11px] text-fg-muted">{meta.label}</p>
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -51,6 +58,8 @@ export function AppShell({
 
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[16rem_1fr]">
+      {/* Live notifications for as long as a panel is on screen. */}
+      <RealtimeBridge />
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-dvh flex-col gap-4 border-r border-border bg-card p-4 lg:flex">
         <Brand role={role} />
@@ -67,7 +76,7 @@ export function AppShell({
         side="left"
       >
         <div className="flex items-center justify-between border-b border-border p-4">
-          <Brand role={role} />
+          <Brand role={role} onNavigate={() => dispatch(setMobileNavOpen(false))} />
           <IconButton
             icon={X}
             label="Close menu"

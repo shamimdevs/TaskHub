@@ -139,3 +139,13 @@ export const updateSettingsSchema = z.object({
   /** Per-platform, per-action prices to upsert. */
   rates: z.array(rateCardEntrySchema).max(100).optional(),
 });
+
+/** One FCM registration token, as handed over by the browser. */
+export const pushTokenSchema = z.object({
+  token: z.string().min(20).max(4096),
+});
+
+/** First password for an account that only ever signed in with Google. */
+export const setPasswordSchema = z.object({
+  newPassword: z.string().min(8).max(128),
+});

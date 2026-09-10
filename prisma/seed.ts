@@ -26,11 +26,16 @@ const ADMIN = {
   password: process.env.SEED_ADMIN_PASSWORD || "Password123!",
 } as const;
 
-/** Limits + commission. `update: {}` keeps whatever the admin has since tuned. */
+/**
+ * Limits + commission. The update only re-asserts `autoApproveDeposits`:
+ * money must never be credited without a human looking at the TrxID, so a
+ * fresh seed always puts deposits back in the pending queue. Every other
+ * value the admin has since tuned is left alone.
+ */
 async function seedSettings() {
   await prisma.platformSettings.upsert({
     where: { id: "singleton" },
-    update: {},
+    update: { autoApproveDeposits: false },
     create: {
       id: "singleton",
       // Taka per dollar. Admins change this whenever the market moves.
@@ -51,14 +56,26 @@ async function seedSettings() {
 
 /**
  * One price per platform + action, in USD. Only missing pairs are created, so
- * re-seeding never overwrites a price the admin has tuned in the panel.
+ * re-seeding never overwrites a price the admin has tuned in the panel — but
+ * pairs the platform no longer sells are deleted, so an install seeded before
+ * an action was retired does not keep offering it.
  */
 async function seedRateCard() {
   const created = await prisma.rateCard.createMany({
     data: RATE_CARD_ENTRIES,
     skipDuplicates: true,
   });
-  return created.count;
+  const { count: removed } = await prisma.rateCard.deleteMany({
+    where: {
+      NOT: {
+        OR: RATE_CARD_ENTRIES.map((e) => ({
+          platform: e.platform,
+          type: e.type,
+        })),
+      },
+    },
+  });
+  return { created: created.count, removed };
 }
 
 async function seedSuperAdmin() {
@@ -103,8 +120,10 @@ async function seedSuperAdmin() {
 async function main() {
   console.log("Seeding TaskHub…");
   await seedSettings();
-  const added = await seedRateCard();
-  console.log(`Rate card: ${added} new price(s), ${RATE_CARD_ENTRIES.length} total.`);
+  const { created, removed } = await seedRateCard();
+  console.log(
+    `Rate card: ${created} new price(s), ${removed} retired, ${RATE_CARD_ENTRIES.length} total.`,
+  );
   const admin = await seedSuperAdmin();
   console.log(`Super admin ready: ${admin.email} / ${ADMIN.password}`);
   console.log("Change the password after the first sign-in.");

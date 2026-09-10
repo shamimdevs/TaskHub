@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, Menu, Wallet } from "lucide-react";
+import { Bell, Home, Menu, Wallet } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
 import { setMobileNavOpen } from "@/redux/features/session/sessionSlice";
 import { useGetWalletQuery } from "@/redux/features/wallet/walletApi";
@@ -43,6 +43,15 @@ export function Topbar({ title }: { title?: string }) {
           {formatMoney(wallet?.user.balance ?? 0)}
         </Link>
       )}
+
+      <Link
+        href="/"
+        className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-fg-muted hover:bg-bg-subtle hover:text-fg"
+        aria-label="Go to the public site"
+        title="Go to the public site"
+      >
+        <Home size={18} />
+      </Link>
 
       <div className="hidden sm:block">
         <ThemeToggle />

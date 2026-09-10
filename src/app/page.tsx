@@ -4,13 +4,10 @@ import {
   BadgeDollarSign,
   CheckCircle2,
   Clock,
-  Eye,
-  MessageCircle,
   Megaphone,
   ShieldCheck,
   Smartphone,
   Sparkles,
-  ThumbsUp,
   TrendingUp,
   Users,
   Wallet,
@@ -25,11 +22,9 @@ import { MarketingBottomNav } from "@/components/marketing/MarketingBottomNav";
 
 const SERVICES = [
   { icon: PlaySquare, label: "YouTube subscribers" },
-  { icon: Clock, label: "Watch time (hours)" },
-  { icon: Eye, label: "Video views" },
-  { icon: ThumbsUp, label: "Likes" },
-  { icon: MessageCircle, label: "Comments" },
-  { icon: Users, label: "FB / IG / TikTok follows" },
+  { icon: Clock, label: "Watch time (per minute)" },
+  { icon: Users, label: "Facebook page follows" },
+  { icon: Users, label: "Instagram follows" },
 ];
 
 // Open jobs come from the database, so render at request time rather than

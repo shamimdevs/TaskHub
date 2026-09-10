@@ -34,42 +34,25 @@ export const USD_RATE = 120;
  * withdrawal commission in `FEES`. Admins edit these live in the rate card;
  * these values only seed a fresh install.
  *
- * `watch_time` is priced per hour, `view` per view, everything else per action.
+ * Only four actions are sold: Facebook follow, Instagram follow, YouTube
+ * subscribe and YouTube watch time. `watch_time` is priced per MINUTE (it used
+ * to be per hour); everything else is per action. A platform with no entry
+ * here sells nothing — it stays in the enums so old rows still render.
  */
 export const RATE_CARD: Record<Platform, Partial<Record<TaskType, number>>> = {
   facebook: {
     follow: 0.01,
-    like: 0.005,
-    comment: 0.02,
-    share: 0.012,
-    join_group: 0.015,
   },
   instagram: {
     follow: 0.012,
-    like: 0.006,
-    comment: 0.022,
-    share: 0.014,
   },
   youtube: {
     subscribe: 0.02,
-    like: 0.008,
-    comment: 0.025,
-    view: 0.003,
-    watch_time: 0.08,
+    // Per minute watched — the old $0.08/hour, priced by the minute.
+    watch_time: 0.0015,
   },
-  tiktok: {
-    follow: 0.011,
-    like: 0.005,
-    comment: 0.02,
-    share: 0.012,
-    view: 0.002,
-  },
-  twitter: {
-    follow: 0.012,
-    like: 0.006,
-    comment: 0.022,
-    share: 0.012,
-  },
+  tiktok: {},
+  twitter: {},
 };
 
 /** Every (platform, action) pair the rate card covers, in a stable order. */
@@ -82,10 +65,18 @@ export const RATE_CARD_ENTRIES = (Object.keys(RATE_CARD) as Platform[]).flatMap(
     })),
 );
 
-/** Cheapest and dearest default action — used in public pricing copy. */
+/**
+ * Cheapest and dearest default action — used in public pricing copy. Watch
+ * time is left out: it is priced per minute, not per action, so quoting it
+ * next to a per-task price would compare two different things.
+ */
+const PER_ACTION_RATES = RATE_CARD_ENTRIES.filter(
+  (e) => e.type !== "watch_time",
+).map((e) => e.rate);
+
 export const RATE_RANGE = {
-  min: Math.min(...RATE_CARD_ENTRIES.map((e) => e.rate)),
-  max: Math.max(...RATE_CARD_ENTRIES.map((e) => e.rate)),
+  min: Math.min(...PER_ACTION_RATES),
+  max: Math.max(...PER_ACTION_RATES),
 };
 
 /** The platform's only commission: deducted when a worker withdraws. */
@@ -116,6 +107,11 @@ export const AUDIENCE_NOUN: Record<Platform, string> = {
   twitter: "followers",
 };
 
+/**
+ * Label, colour and the actions each platform sells. `actions` must mirror
+ * `RATE_CARD`: nothing is offered that has no price. TikTok and X keep their
+ * label so historical rows still render, but sell nothing today.
+ */
 export const PLATFORMS: Record<
   Platform,
   { label: string; color: string; actions: TaskType[] }
@@ -123,29 +119,39 @@ export const PLATFORMS: Record<
   facebook: {
     label: "Facebook",
     color: "#1877F2",
-    actions: ["follow", "like", "comment", "share", "join_group"],
+    actions: ["follow"],
   },
   instagram: {
     label: "Instagram",
     color: "#E1306C",
-    actions: ["follow", "like", "comment", "share"],
+    actions: ["follow"],
   },
   youtube: {
     label: "YouTube",
     color: "#FF0000",
-    actions: ["subscribe", "like", "comment", "view", "watch_time"],
+    actions: ["subscribe", "watch_time"],
   },
   tiktok: {
     label: "TikTok",
     color: "#010101",
-    actions: ["follow", "like", "comment", "share", "view"],
+    actions: [],
   },
   twitter: {
     label: "X (Twitter)",
     color: "#0F1419",
-    actions: ["follow", "like", "comment", "share"],
+    actions: [],
   },
 };
+
+/** Platforms a buyer can actually order on — the ones with a price. */
+export const OFFERED_PLATFORMS = (Object.keys(PLATFORMS) as Platform[]).filter(
+  (p) => PLATFORMS[p].actions.length > 0,
+);
+
+/** Actions sold on at least one platform, in rate-card order. */
+export const OFFERED_TASK_TYPES = [
+  ...new Set(RATE_CARD_ENTRIES.map((e) => e.type)),
+];
 
 export const TASK_TYPES: Record<
   TaskType,
@@ -164,8 +170,8 @@ export const TASK_TYPES: Record<
   view: { label: "View", verb: "Watch the video", unit: "views" },
   watch_time: {
     label: "Watch time",
-    verb: "Watch the video for at least an hour",
-    unit: "hours",
+    verb: "Watch the video, minute by minute",
+    unit: "minutes",
   },
 };
 

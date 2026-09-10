@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { Avatar } from "@/components/ui/Misc";
 import { authClient } from "@/lib/auth-client";
+import { disablePush } from "@/lib/firebase-client";
 import { useGetMeQuery } from "@/redux/features/session/sessionApi";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +21,8 @@ export function RoleSwitcher({ compact }: { compact?: boolean }) {
   async function signOut() {
     setBusy(true);
     try {
+      // Unregister the device first — after signOut the API would refuse it.
+      await disablePush();
       await authClient.signOut();
     } finally {
       router.replace("/login");

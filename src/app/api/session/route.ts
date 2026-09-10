@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, isResponse, json, apiError } from "@/lib/api";
 import { toUser } from "@/lib/dto";
+import { imagekitConfigured } from "@/lib/imagekit";
 
 export async function GET(req: Request) {
   const auth = await requireApiUser(req);
@@ -19,5 +20,12 @@ export async function GET(req: Request) {
     .update({ where: { id: user.id }, data: { lastActiveAt: new Date() } })
     .catch(() => {});
 
-  return json({ ...toUser(user), emailVerified: user.emailVerified, hasPassword: Boolean(credential) });
+  return json({
+    ...toUser(user),
+    emailVerified: user.emailVerified,
+    hasPassword: Boolean(credential),
+    // The keys live on the server, so the panel is told whether to offer the
+    // upload button rather than checking for itself.
+    canUploadImages: imagekitConfigured(),
+  });
 }

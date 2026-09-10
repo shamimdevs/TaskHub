@@ -175,6 +175,7 @@ model User {
   referralsMade  Referral[]          @relation("ReferralReferrer")
   facebookPages  FacebookPage[]
   socialAccounts SocialAccount[]
+  pushTokens     PushToken[]
 
   @@index([role])
   @@index([status])
@@ -417,6 +418,22 @@ model Notification {
   @@index([userId, createdAt])
 }
 
+/// One browser or app install that agreed to receive push. A person can have
+/// several (phone, laptop, work machine); FCM rotates the token, so the row is
+/// keyed by the token itself and dead ones are pruned on the first failed send.
+model PushToken {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// FCM registration token.
+  token      String   @unique
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now()) @updatedAt
+
+  @@index([userId])
+}
+
 model Referral {
   id             String         @id @default(cuid())
   referrerId     String
@@ -436,7 +453,7 @@ model RateCard {
   id        String   @id @default(cuid())
   platform  Platform
   type      TaskType
-  /// USD per action (per hour for watch_time).
+  /// USD per action (per minute for watch_time).
   rate      Decimal  @db.Decimal(14, 4)
   enabled   Boolean  @default(true)
   updatedAt DateTime @updatedAt
