@@ -44,9 +44,13 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
       return;
     }
     try {
-      await submit({ taskId, proofUrl: url, proofNote }).unwrap();
+      const res = await submit({ taskId, proofUrl: url, proofNote }).unwrap();
       setDone(true);
-      toast.success(t.worker.submissionSent);
+      toast.success(
+        res.status === "approved"
+          ? "Subscription confirmed — reward added to your balance"
+          : t.worker.submissionSent,
+      );
       setTimeout(() => router.push("/worker/submissions"), 1200);
     } catch (e) {
       // "You have already submitted this task" and "No slots left" are both
@@ -70,6 +74,13 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
           const linked = social?.accounts.find(
             (a) => a.provider === task.platform && a.profileUrl,
           );
+          // Checked against their own subscriptions, which needs the full
+          // connection — a typed or code-verified handle cannot be asked.
+          const needsConnection =
+            task.autoCheck &&
+            !social?.accounts.some(
+              (a) => a.provider === task.platform && a.autoCheckable,
+            );
           return (
           <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
             <div className="space-y-4">
@@ -143,10 +154,35 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
                     </>
                   ) : (
                   <>
+                  {needsConnection ? (
+                    <>
+                      <Alert tone="warning" title="Connect your YouTube channel first">
+                        This task is checked automatically against your own
+                        YouTube subscriptions, so your channel has to be
+                        connected before you subscribe. It only takes a moment
+                        and you only do it once.
+                      </Alert>
+                      <LinkButton
+                        href="/worker/accounts"
+                        fullWidth
+                        iconRight={ArrowRight}
+                      >
+                        Connect YouTube
+                      </LinkButton>
+                    </>
+                  ) : (
+                  <>
                   {!opened && (
                     <Alert tone="info">
                       Open the task link first, complete the action, then submit
                       your proof.
+                    </Alert>
+                  )}
+                  {task.autoCheck && linked && (
+                    <Alert tone="info">
+                      Subscribe while YouTube is signed in to{" "}
+                      <span className="font-semibold">{linked.name}</span> —
+                      that is the channel we check.
                     </Alert>
                   )}
                   {linked ? (
@@ -177,7 +213,7 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
                         />
                       </Field>
                       <Alert tone="info">
-                        <a href="/worker/profile" className="font-semibold underline">
+                        <a href="/worker/accounts" className="font-semibold underline">
                           Link your account
                         </a>{" "}
                         and your proof link fills itself in from now on.
@@ -200,6 +236,8 @@ export default function TaskDetailPage({ params }: PageProps<"/worker/tasks/[id]
                   >
                     {done ? "Submitted" : t.worker.submitProof}
                   </Button>
+                  </>
+                  )}
                   </>
                   )}
                 </CardBody>

@@ -60,7 +60,7 @@ async function submitOnce(
     // through several TaskHub accounts.
     const linked = await tx.socialAccount.findUnique({
       where: { userId_provider: { userId: worker.id, provider: task.platform } },
-      select: { profileUrl: true, refreshToken: true },
+      select: { providerId: true, profileUrl: true, refreshToken: true },
     });
 
     // A campaign with a `targetRef` is settled by asking the platform about
@@ -69,8 +69,29 @@ async function submitOnce(
     // ever sit pending waiting for an answer that cannot come.
     if (task.campaign.targetRef && !linked?.refreshToken) {
       throw new DomainError(
-        `Link your ${task.platform} account on your profile first — this task is checked against it`,
+        `Connect your ${task.platform} channel under Connected accounts first — this task is checked against it`,
       );
+    }
+
+    // One account, one reward per campaign. The one-account-one-worker rule
+    // only holds at any single moment: a channel can be unlinked from one
+    // worker and relinked to another, and its subscription is still there.
+    const accountRef = linked?.providerId ?? null;
+    if (accountRef) {
+      const reused = await tx.submission.findFirst({
+        where: {
+          campaignId: task.campaignId,
+          accountRef,
+          status: { not: "rejected" },
+        },
+        select: { id: true },
+      });
+      if (reused) {
+        throw new DomainError(
+          `This ${task.platform} account has already been used for this task`,
+          409,
+        );
+      }
     }
 
     const proofUrl = linked?.profileUrl ?? input.proofUrl.trim();
@@ -93,6 +114,7 @@ async function submitOnce(
         title: task.title,
         reward: task.reward,
         status: "pending",
+        accountRef,
         proofUrl,
         proofNote: input.proofNote?.trim() || null,
         screenshotUrl: input.screenshotUrl?.trim() || null,
@@ -128,8 +150,35 @@ export async function reviewSubmission(
     const now = new Date();
     const trimmedNote = note?.trim() || null;
 
+    /**
+     * Move the row out of the state `sub` was read in, or refuse.
+     *
+     * The status check on `sub` above is only a read: the on-submit check, the
+     * cron (on more than one instance) and an admin can all hold the same
+     * pending row at once, and each would pass it and post the money again.
+     * A conditional update takes the row lock, so the second one waits, then
+     * finds the status already moved and matches nothing.
+     */
+    const claim = async (data: Prisma.SubmissionUncheckedUpdateManyInput) => {
+      const { count } = await tx.submission.updateMany({
+        where: { id, status: sub.status, releasedAt: sub.releasedAt },
+        data,
+      });
+      if (count === 0) throw new DomainError("This submission was already settled", 409);
+    };
+
     if (action === "approve") {
       if (sub.status !== "pending") throw new DomainError("Only pending submissions can be approved");
+      await claim({
+        status: "approved",
+        reviewedAt: now,
+        reviewedById: reviewerId,
+        autoVerified,
+        reviewerNote: trimmedNote,
+        holdUntil: new Date(now.getTime() + sub.task.holdDays * 86_400_000),
+        releasedAt: null,
+        lastCheckedAt: now,
+      });
       await postTransaction({
         tx,
         userId: sub.workerId,
@@ -140,27 +189,25 @@ export async function reviewSubmission(
         reference: sub.id,
         held: true,
       });
-      return tx.submission.update({
-        where: { id },
-        data: {
-          status: "approved",
-          reviewedAt: now,
-          reviewedById: reviewerId,
-          autoVerified,
-          reviewerNote: trimmedNote,
-          holdUntil: new Date(now.getTime() + sub.task.holdDays * 86_400_000),
-          releasedAt: null,
-        },
-      });
+      return tx.submission.findUniqueOrThrow({ where: { id } });
     }
 
     if (action === "reject") {
       if (sub.status === "rejected" || sub.status === "reversed") {
         throw new DomainError("This submission was already settled");
       }
+      // Past the hold the delivery is final; only a penalty can claw it back.
+      if (sub.status === "approved" && sub.releasedAt) {
+        throw new DomainError("This reward has already cleared — penalize instead");
+      }
+      await claim({
+        status: "rejected",
+        reviewedAt: now,
+        reviewedById: reviewerId,
+        autoVerified,
+        reviewerNote: trimmedNote ?? "Proof did not meet the requirements.",
+      });
       if (sub.status === "approved") {
-        // Past the hold the delivery is final; only a penalty can claw it back.
-        if (sub.releasedAt) throw new DomainError("This reward has already cleared — penalize instead");
         // Still held: take the reward back out of the balance it went into.
         await postTransaction({
           tx,
@@ -183,22 +230,20 @@ export async function reviewSubmission(
         where: { id: sub.campaignId },
         data: { delivered: { decrement: 1 } },
       });
-      return tx.submission.update({
-        where: { id },
-        data: {
-          status: "rejected",
-          reviewedAt: now,
-          reviewedById: reviewerId,
-          autoVerified,
-          reviewerNote: trimmedNote ?? "Proof did not meet the requirements.",
-        },
-      });
+      return tx.submission.findUniqueOrThrow({ where: { id } });
     }
 
     // penalize — claw back a completed submission's reward
     if (sub.status !== "approved") {
       throw new DomainError("Only completed submissions can be penalised");
     }
+    await claim({
+      status: "reversed",
+      reviewedAt: now,
+      reviewedById: reviewerId,
+      autoVerified,
+      reviewerNote: trimmedNote ?? "Engagement was undone after the reward cleared.",
+    });
     await postTransaction({
       tx,
       userId: sub.workerId,
@@ -212,16 +257,7 @@ export async function reviewSubmission(
     if (!sub.releasedAt) {
       await releaseHeldReward({ tx, userId: sub.workerId, amount: sub.reward });
     }
-    return tx.submission.update({
-      where: { id },
-      data: {
-        status: "reversed",
-        reviewedAt: now,
-        reviewedById: reviewerId,
-        autoVerified,
-        reviewerNote: trimmedNote ?? "Engagement was undone after the reward cleared.",
-      },
-    });
+    return tx.submission.findUniqueOrThrow({ where: { id } });
   });
 
   // Whichever branch ran, the worker hears about it once, after the commit.
@@ -271,13 +307,15 @@ export async function releaseDueRewards(): Promise<number> {
   const settled: typeof due = [];
   for (const s of due) {
     await prisma.$transaction(async (tx) => {
-      const fresh = await tx.submission.findUnique({
-        where: { id: s.id },
-        select: { status: true, releasedAt: true },
+      // Conditional, so a reversal racing this release cannot have both of
+      // them take the reward out of `heldBalance`: whichever locks the row
+      // second finds it already moved and does nothing.
+      const { count } = await tx.submission.updateMany({
+        where: { id: s.id, status: "approved", releasedAt: null },
+        data: { releasedAt: new Date() },
       });
-      if (fresh?.status !== "approved" || fresh.releasedAt) return;
+      if (count === 0) return;
       await releaseHeldReward({ tx, userId: s.workerId, amount: s.reward });
-      await tx.submission.update({ where: { id: s.id }, data: { releasedAt: new Date() } });
       await maybeQualifyReferral(tx, s.workerId);
       released++;
       settled.push(s);

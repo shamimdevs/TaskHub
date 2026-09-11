@@ -107,5 +107,55 @@ app.prepare().then(() => {
     console.log(
       `> TaskHub on http://${hostname}:${port} (${dev ? "development" : "production"}) — realtime on`,
     );
+    startVerifyLoop();
   });
 });
+
+/**
+ * Runs `POST /api/cron/verify` from inside this process, so YouTube
+ * subscriptions, follower counts and hold releases are settled without an
+ * external scheduler having to be set up first — without one, nothing but the
+ * on-submit check ever approved anything.
+ *
+ * It goes through the HTTP route rather than calling the domain directly
+ * because this file sits outside the Next bundle and must not import anything
+ * `server-only`. Several instances running it at once is safe: every
+ * settlement is guarded on the submission's status.
+ *
+ * VERIFY_INTERVAL_MINUTES=0 turns it off (e.g. when a platform cron calls the
+ * route instead).
+ */
+function startVerifyLoop() {
+  const secret = process.env.CRON_SECRET;
+  const minutes = Number(process.env.VERIFY_INTERVAL_MINUTES ?? 3);
+  if (!secret || !(minutes > 0)) {
+    console.log("> verify loop off (set CRON_SECRET and VERIFY_INTERVAL_MINUTES to enable)");
+    return;
+  }
+
+  const host = hostname === "0.0.0.0" || hostname === "::" ? "127.0.0.1" : hostname;
+  const url = `http://${host}:${port}/api/cron/verify`;
+  let running = false;
+
+  const tick = async () => {
+    // A slow pass must not have the next one pile in on top of it.
+    if (running) return;
+    running = true;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${secret}` },
+      });
+      if (!res.ok) console.error(`[verify] pass failed: HTTP ${res.status}`);
+    } catch (err) {
+      console.error("[verify] pass failed:", (err as Error).message);
+    } finally {
+      running = false;
+    }
+  };
+
+  // First pass shortly after boot, once Next has had a moment to warm up.
+  setTimeout(tick, 15_000).unref();
+  setInterval(tick, minutes * 60_000).unref();
+  console.log(`> verify loop every ${minutes} min`);
+}

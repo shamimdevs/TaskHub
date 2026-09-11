@@ -328,6 +328,13 @@ model Submission {
   reviewedBy    User?            @relation("SubmissionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   /// Cleared by the follower-count checker rather than a person.
   autoVerified  Boolean          @default(false)
+  /// The provider id of the linked account this was submitted with — the
+  /// YouTube channel id on a subscribe task. One account earns one reward per
+  /// campaign, however many TaskHub workers it is unlinked and relinked to.
+  accountRef    String?
+  /// Last time the platform confirmed the engagement was still there. Held
+  /// rewards are re-checked against it on a slow cadence, not every pass.
+  lastCheckedAt DateTime?
 
   /// One worker, one task, once — and enforced here rather than only in
   /// `createSubmission`, because the check there reads before it writes: two

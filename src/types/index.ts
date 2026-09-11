@@ -126,6 +126,11 @@ export interface Task {
   alreadySubmitted?: boolean;
   /** Their existing submission, to send them to. */
   submissionId?: string | null;
+  /**
+   * Settled by asking the platform about the worker's own linked account
+   * (YouTube subscribe). Single-task endpoint only.
+   */
+  autoCheck?: boolean;
 }
 
 export interface Submission {

@@ -10,6 +10,7 @@ import { isSubscribedTo, YouTubeError } from "@/lib/youtube";
 import { getSettings } from "./settings";
 import { reviewSubmission } from "./submissions";
 import { youtubeAccessToken, noteAccountError } from "./social";
+import { DomainError } from "./errors";
 
 /**
  * Hands-off verification.
@@ -83,69 +84,62 @@ function absorb(run: VerificationRun, o: Outcome) {
   run.deferred += o.deferred;
 }
 
+/**
+ * Settle one submission, or report that somebody else already did.
+ *
+ * The on-submit check, a second server instance and an admin can all reach the
+ * same submission; `reviewSubmission` refuses whichever arrives second with a
+ * DomainError. That is not a failure of the pass — it must not abort the
+ * campaigns still waiting behind this one.
+ */
+async function settle(
+  id: string,
+  action: "approve" | "reject",
+  note: string,
+): Promise<boolean> {
+  try {
+    await reviewSubmission(null, id, action, note);
+    return true;
+  } catch (e) {
+    if (e instanceof DomainError) return false;
+    throw e;
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Direct checks — YouTube
  * ------------------------------------------------------------------ */
 
 /**
- * How long a just-approved submission is left alone before we re-check whether
- * the subscription is still there. Without it, every submission cleared in a
- * pass would be checked twice in that same pass — a doubled YouTube quota bill
- * for an answer we already have.
+ * How often a reward still on hold is asked about again. Every question costs
+ * YouTube quota, and a subscription that was there an hour ago almost always
+ * still is; re-asking on every pass spent the day's quota on a few dozen held
+ * rewards. A few times a day still catches the unsubscribe well inside any
+ * hold window.
  */
-const RECHECK_AFTER_MS = 5 * 60_000;
+const RECHECK_HELD_MS = 6 * 3_600_000;
+
+const APPROVED_NOTE = "Confirmed on your YouTube subscriptions.";
+
+interface DirectSubmission {
+  id: string;
+  workerId: string;
+  /** The channel id it was submitted with; null on older submissions. */
+  accountRef: string | null;
+}
 
 /**
- * Settles one campaign by asking YouTube about each worker in turn — both the
- * submissions waiting to be cleared and the ones already on hold, in one go.
+ * Asks YouTube, as each worker, whether they subscribe to `channelId`.
  *
- * Both halves share a single account read and a single token cache, so a
- * worker whose access token needs refreshing costs exactly one round trip to
- * Google however many submissions of theirs are in play.
+ * Every worker's account is read once, and every token refreshed at most once,
+ * however many submissions of theirs are in play.
  *
- * A worker with no linked account, or a revoked one, is *deferred* rather than
- * rejected: the automation could not see an answer, which is not the same as
- * seeing that they did not subscribe, and only the second deserves a refusal.
- * Deferred submissions stay pending for the admin queue.
+ * A worker with no linked account, a revoked one, or a different channel from
+ * the one they submitted with gets null rather than false: the automation
+ * could not see an answer, which is not the same as seeing that they did not
+ * subscribe, and only the second deserves a refusal.
  */
-async function settleDirectCampaign(
-  campaignId: string,
-  channelId: string,
-  graceMins: number,
-): Promise<Outcome> {
-  const out = noOutcome();
-  const now = Date.now();
-
-  const [pending, held] = await Promise.all([
-    prisma.submission.findMany({
-      where: { campaignId, status: "pending" },
-      orderBy: { submittedAt: "asc" },
-      select: { id: true, workerId: true, submittedAt: true },
-      take: 500,
-    }),
-    prisma.submission.findMany({
-      where: {
-        campaignId,
-        status: "approved",
-        releasedAt: null,
-        // Anything cleared moments ago was just confirmed; leave it be.
-        OR: [
-          { reviewedAt: null },
-          { reviewedAt: { lt: new Date(now - RECHECK_AFTER_MS) } },
-        ],
-      },
-      orderBy: { submittedAt: "desc" },
-      select: { id: true, workerId: true },
-      take: 500,
-    }),
-  ]);
-  if (!pending.length && !held.length) return out;
-
-  // Everyone's account in one read — a campaign's submissions come from many
-  // different workers, and one query beats one round-trip each.
-  const workerIds = [
-    ...new Set([...pending, ...held].map((s) => s.workerId)),
-  ];
+async function youtubeChecker(channelId: string, workerIds: string[]) {
   const accounts = await prisma.socialAccount.findMany({
     where: { provider: "youtube", userId: { in: workerIds } },
   });
@@ -154,13 +148,13 @@ async function settleDirectCampaign(
   const tokens = new Map<string, string | null>();
   const checked = new Set<string>();
 
-  /**
-   * Whether this worker subscribes, or null when we could not find out. The
-   * distinction is the whole point: null never costs anyone a reward.
-   */
-  const subscribes = async (workerId: string): Promise<boolean | null> => {
-    const account = byWorker.get(workerId);
+  return async (sub: DirectSubmission): Promise<boolean | null> => {
+    const account = byWorker.get(sub.workerId);
     if (!account) return null;
+    // The channel that submitted is the one that has to be subscribed. A
+    // worker who has since switched channels is asked nothing — the new
+    // channel's subscriptions say nothing about the old one's.
+    if (sub.accountRef && sub.accountRef !== account.providerId) return null;
 
     if (!tokens.has(account.id)) {
       tokens.set(account.id, await youtubeAccessToken(account));
@@ -187,35 +181,78 @@ async function settleDirectCampaign(
       return null;
     }
   };
+}
+
+/**
+ * Settles one campaign by asking YouTube about each worker in turn — both the
+ * submissions waiting to be cleared and the ones on hold that are due a
+ * re-check, in one go.
+ *
+ * Deferred submissions (no answer) stay pending and are asked again next pass.
+ */
+async function settleDirectCampaign(
+  campaignId: string,
+  channelId: string,
+  graceMins: number,
+): Promise<Outcome> {
+  const out = noOutcome();
+  const now = Date.now();
+  const recheckBefore = new Date(now - RECHECK_HELD_MS);
+
+  const [pending, held] = await Promise.all([
+    prisma.submission.findMany({
+      where: { campaignId, status: "pending" },
+      orderBy: { submittedAt: "asc" },
+      select: { id: true, workerId: true, accountRef: true, submittedAt: true },
+      take: 500,
+    }),
+    prisma.submission.findMany({
+      where: {
+        campaignId,
+        status: "approved",
+        releasedAt: null,
+        OR: [
+          { lastCheckedAt: { lt: recheckBefore } },
+          // Approved before `lastCheckedAt` existed.
+          { lastCheckedAt: null, reviewedAt: { lt: recheckBefore } },
+          { lastCheckedAt: null, reviewedAt: null },
+        ],
+      },
+      orderBy: { submittedAt: "desc" },
+      select: { id: true, workerId: true, accountRef: true },
+      take: 500,
+    }),
+  ]);
+  if (!pending.length && !held.length) return out;
+
+  const subscribes = await youtubeChecker(channelId, [
+    ...new Set([...pending, ...held].map((s) => s.workerId)),
+  ]);
 
   const graceMs = graceMins * 60_000;
 
   for (const sub of pending) {
-    const answer = await subscribes(sub.workerId);
+    const answer = await subscribes(sub);
     if (answer === null) {
       out.deferred++;
       continue;
     }
     if (answer) {
-      await reviewSubmission(
-        null,
-        sub.id,
-        "approve",
-        "Confirmed on your YouTube subscriptions.",
-      );
-      out.approved++;
+      if (await settle(sub.id, "approve", APPROVED_NOTE)) out.approved++;
       continue;
     }
     // Not subscribed. Give them the grace window before refusing — the check
     // can run seconds after they submit, and YouTube is not always instant.
     if (now - sub.submittedAt.getTime() >= graceMs) {
-      await reviewSubmission(
-        null,
-        sub.id,
-        "reject",
-        "Your YouTube account is not subscribed to this channel.",
-      );
-      out.rejected++;
+      if (
+        await settle(
+          sub.id,
+          "reject",
+          "Your YouTube account is not subscribed to this channel.",
+        )
+      ) {
+        out.rejected++;
+      }
     }
   }
 
@@ -223,19 +260,70 @@ async function settleDirectCampaign(
   // check makes this exact: we know which worker it was, rather than inferring
   // it from a count that fell.
   for (const sub of held) {
-    // No answer means no accusation: leave the reward alone.
-    if ((await subscribes(sub.workerId)) === false) {
-      await reviewSubmission(
-        null,
+    const answer = await subscribes(sub);
+    // No answer means no accusation: leave the reward alone and ask again.
+    if (answer === null) continue;
+    if (answer) {
+      await prisma.submission.update({
+        where: { id: sub.id },
+        data: { lastCheckedAt: new Date() },
+      });
+      continue;
+    }
+    if (
+      await settle(
         sub.id,
         "reject",
         "The subscription was undone before the hold period ended.",
-      );
+      )
+    ) {
       out.reversed++;
     }
   }
 
   return out;
+}
+
+/**
+ * Check one YouTube submission the moment it is made, so a worker who really
+ * subscribed is paid while still on the page instead of on the next cron pass.
+ *
+ * Only ever approves. A "not subscribed" here is usually YouTube a few seconds
+ * behind the click, so refusing is left to the cron after the grace window.
+ * Returns true when the submission was approved.
+ */
+export async function checkSubmissionNow(submissionId: string): Promise<boolean> {
+  const settings = await getSettings();
+  if (!settings.autoVerify) return false;
+
+  const sub = await prisma.submission.findUnique({
+    where: { id: submissionId },
+    select: {
+      id: true,
+      workerId: true,
+      accountRef: true,
+      status: true,
+      campaign: {
+        select: {
+          id: true,
+          platform: true,
+          targetRef: true,
+          quantity: true,
+          status: true,
+        },
+      },
+    },
+  });
+  if (!sub || sub.status !== "pending") return false;
+  const { campaign } = sub;
+  if (campaign.platform !== "youtube" || !campaign.targetRef) return false;
+
+  const subscribes = await youtubeChecker(campaign.targetRef, [sub.workerId]);
+  if ((await subscribes(sub)) !== true) return false;
+  if (!(await settle(sub.id, "approve", APPROVED_NOTE))) return false;
+
+  await completeIfDelivered(campaign.id, campaign.quantity, campaign.status);
+  return true;
 }
 
 /* ------------------------------------------------------------------ *
@@ -312,13 +400,11 @@ export async function settleCampaign(
   let shortfall = cleared - delta;
   for (const sub of held) {
     if (shortfall <= 0) break;
-    await reviewSubmission(
-      null,
-      sub.id,
-      "reject",
-      "The follow was undone before the hold period ended.",
-    );
-    out.reversed++;
+    if (
+      await settle(sub.id, "reject", "The follow was undone before the hold period ended.")
+    ) {
+      out.reversed++;
+    }
     cleared--;
     shortfall--;
   }
@@ -330,19 +416,16 @@ export async function settleCampaign(
 
   for (const sub of pending) {
     if (room > 0) {
-      await reviewSubmission(null, sub.id, "approve", "Confirmed by follower count.");
-      out.approved++;
+      if (await settle(sub.id, "approve", "Confirmed by follower count.")) {
+        out.approved++;
+      }
       room--;
       continue;
     }
     if (now - sub.submittedAt.getTime() >= graceMs) {
-      await reviewSubmission(
-        null,
-        sub.id,
-        "reject",
-        "We could not see this follow on the account.",
-      );
-      out.rejected++;
+      if (await settle(sub.id, "reject", "We could not see this follow on the account.")) {
+        out.rejected++;
+      }
     }
   }
 
@@ -364,6 +447,23 @@ async function completeIfDelivered(
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { status: "completed" },
+    });
+  }
+}
+
+/**
+ * A completed campaign that just had a held reward reversed is short again:
+ * the reversal put the slot back on the task, so put the campaign back in
+ * front of workers to fill it — the buyer paid for that delivery.
+ */
+async function reopenIfShort(campaignId: string, quantity: number) {
+  const settled = await prisma.submission.count({
+    where: { campaignId, status: "approved" },
+  });
+  if (settled < quantity) {
+    await prisma.campaign.updateMany({
+      where: { id: campaignId, status: "completed" },
+      data: { status: "active" },
     });
   }
 }
@@ -395,35 +495,44 @@ async function runCountVerification(
     for (const platform of ["facebook", "instagram"] as const) {
       if (platform === "instagram" && !page.instagramId) continue;
 
-      const campaigns = await prisma.campaign.findMany({
-        where: { pageId: page.id, status: "active", platform, type: "follow" },
-        select: { id: true },
-      });
-      if (!campaigns.length) continue;
+      try {
+        const campaigns = await prisma.campaign.findMany({
+          where: { pageId: page.id, status: "active", platform, type: "follow" },
+          select: { id: true },
+        });
+        if (!campaigns.length) continue;
 
-      const followers = await pollPage(page, platform);
-      run.pagesChecked++;
-      if (followers === null) {
-        run.errors.push(`${page.name} (${platform}): follower count unavailable`);
-        continue;
-      }
+        const followers = await pollPage(page, platform);
+        run.pagesChecked++;
+        if (followers === null) {
+          run.errors.push(`${page.name} (${platform}): follower count unavailable`);
+          continue;
+        }
 
-      for (const c of campaigns) {
-        absorb(run, await settleCampaign(c.id, followers, graceMins));
-        run.campaigns++;
+        for (const c of campaigns) {
+          absorb(run, await settleCampaign(c.id, followers, graceMins));
+          run.campaigns++;
+        }
+      } catch (e) {
+        // One page's failure must not strand every campaign behind it.
+        console.error(`[verify] ${page.name} (${platform}) failed:`, e);
+        run.errors.push(`${page.name} (${platform}): ${(e as Error).message}`);
       }
     }
   }
 }
 
-/** Every live campaign we can ask the platform about worker by worker. */
+/** Every campaign we can ask the platform about worker by worker. */
 async function runDirectVerification(
   graceMins: number,
   run: VerificationRun,
 ): Promise<void> {
   const campaigns = await prisma.campaign.findMany({
     where: {
-      status: "active",
+      // Not only active ones. Submissions taken before a pause still need an
+      // answer, and a completed campaign's rewards are still on hold — an
+      // unsubscribe there has to be caught just the same.
+      status: { in: ["active", "paused", "completed"] },
       platform: "youtube",
       type: { in: ["subscribe", "follow"] },
       targetRef: { not: null },
@@ -432,9 +541,20 @@ async function runDirectVerification(
   });
 
   for (const c of campaigns) {
-    absorb(run, await settleDirectCampaign(c.id, c.targetRef!, graceMins));
-    run.campaigns++;
-    await completeIfDelivered(c.id, c.quantity, c.status);
+    try {
+      const out = await settleDirectCampaign(c.id, c.targetRef!, graceMins);
+      absorb(run, out);
+      run.campaigns++;
+      if (c.status === "active") {
+        await completeIfDelivered(c.id, c.quantity, c.status);
+      } else if (c.status === "completed" && out.reversed > 0) {
+        await reopenIfShort(c.id, c.quantity);
+      }
+    } catch (e) {
+      // One campaign's failure must not strand every campaign behind it.
+      console.error(`[verify] campaign ${c.id} failed:`, e);
+      run.errors.push(`campaign ${c.id}: ${(e as Error).message}`);
+    }
   }
 }
 

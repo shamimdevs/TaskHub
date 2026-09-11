@@ -27,7 +27,18 @@ const VERB: Record<TaskType, string> = {
   watch_time: "Watch the required number of minutes of",
 };
 
-function buildInstructions(type: TaskType): string[] {
+function buildInstructions(type: TaskType, directCheck: boolean): string[] {
+  // Checked against the worker's own subscriptions: no screenshot, no typed
+  // link — but it has to be the same channel they connected.
+  if (directCheck) {
+    return [
+      "Connect your YouTube channel under Connected accounts (one time only)",
+      "Open the channel link below",
+      "Make sure YouTube is signed in to that same channel, then press Subscribe",
+      "Come back and press Submit — your subscription is checked automatically",
+      "Stay subscribed until the hold period ends, or the reward is reversed",
+    ];
+  }
   return [
     "Open the link in your browser or app",
     "Log in with your real, active account",
@@ -107,26 +118,46 @@ async function resolveTarget(
   // act here, and the checker already settles both.
   if (input.platform === "youtube") {
     const direct = input.type === "subscribe" || input.type === "follow";
+    const auto = autoVerify && direct;
+
+    let channel: Awaited<ReturnType<typeof resolveChannelId>> = null;
     try {
-      const channel = await resolveChannelId(input.targetUrl);
-      if (!channel) return manual;
-      const auto = autoVerify && direct;
-      return {
-        // Only a campaign we are actually measuring gets its link rewritten to
-        // the channel: a like or a comment campaign points at a *video*, and
-        // sending those workers to the channel page instead would be wrong.
-        targetUrl: auto ? channelUrl(channel) : manual.targetUrl,
-        baselineFollowers: channel.subscribers,
-        // Set only when it will be used. `createSubmission` refuses a worker
-        // with no linked YouTube account on any campaign that carries one, and
-        // a manually reviewed campaign has no business demanding that.
-        ...(auto ? { targetRef: channel.channelId } : {}),
-        auto,
-      };
+      channel = await resolveChannelId(input.targetUrl);
     } catch (e) {
       console.error("[youtube] channel lookup failed:", (e as Error).message);
+      // Nothing approves a subscribe by hand — only the checker does — so a
+      // subscribe campaign we cannot resolve would take the buyer's money and
+      // then hold every submission pending forever. Refuse it before funding.
+      if (auto) {
+        throw new DomainError(
+          "Could not reach YouTube to look up that channel — try again in a minute",
+          502,
+        );
+      }
       return manual;
     }
+
+    if (!channel) {
+      if (auto) {
+        throw new DomainError(
+          "That is not a YouTube channel link — paste youtube.com/@handle or youtube.com/channel/UC…",
+        );
+      }
+      return manual;
+    }
+
+    return {
+      // Only a campaign we are actually measuring gets its link rewritten to
+      // the channel: a like or a comment campaign points at a *video*, and
+      // sending those workers to the channel page instead would be wrong.
+      targetUrl: auto ? channelUrl(channel) : manual.targetUrl,
+      baselineFollowers: channel.subscribers,
+      // Set only when it will be used. `createSubmission` refuses a worker
+      // with no linked YouTube account on any campaign that carries one, and
+      // a manually reviewed campaign has no business demanding that.
+      ...(auto ? { targetRef: channel.channelId } : {}),
+      auto,
+    };
   }
 
   // Facebook and Instagram can only be counted, and a count needs an account
@@ -283,7 +314,7 @@ export async function reviewCampaign(
             type: campaign.type,
             title: campaign.title,
             targetUrl: campaign.targetUrl,
-            instructions: buildInstructions(campaign.type),
+            instructions: buildInstructions(campaign.type, Boolean(campaign.targetRef)),
             reward: campaign.workerReward,
             holdDays: campaign.holdDays,
             slotsLeft: remaining,

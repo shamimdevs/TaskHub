@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireApiRole, isResponse, json, apiError, parseBody } from "@/lib/api";
 import { createSubmissionSchema } from "@/lib/validation";
 import { createSubmission, releaseDueRewards } from "@/lib/domain/submissions";
+import { checkSubmissionNow } from "@/lib/domain/verification";
 import { DomainError } from "@/lib/domain/errors";
 
 const STATUSES: SubmissionStatus[] = [
@@ -41,11 +42,26 @@ export async function POST(req: Request) {
   const body = await parseBody(req, createSubmissionSchema);
   if (isResponse(body)) return body;
 
+  let submission;
   try {
-    const submission = await createSubmission({ id: auth.id, name: auth.name }, body);
-    return json(submission, { status: 201 });
+    submission = await createSubmission({ id: auth.id, name: auth.name }, body);
   } catch (e) {
     if (e instanceof DomainError) return apiError(e.status, e.message);
     throw e;
   }
+
+  // A YouTube subscribe can be confirmed right now, as this worker. Best
+  // effort only: the submission is already saved, and the cron settles
+  // anything this could not.
+  try {
+    if (await checkSubmissionNow(submission.id)) {
+      submission =
+        (await prisma.submission.findUnique({ where: { id: submission.id } })) ??
+        submission;
+    }
+  } catch (e) {
+    console.error("[submissions] instant check failed:", (e as Error).message);
+  }
+
+  return json(submission, { status: 201 });
 }
